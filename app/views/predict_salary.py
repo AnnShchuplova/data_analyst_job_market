@@ -35,12 +35,22 @@ def _project_root():
 
 @st.cache_resource
 def _load_model():
-    """Загрузка модели с кешированием — загружается ОДИН РАЗ."""
+    """Загрузка модели с кешированием — загружается ОДИН РАЗ.
+
+    Возвращает None если модель не найдена или несовместима (например,
+    сохранена с другой версией numpy/catboost). Страница не падает —
+    пользователь видит предложение переобучить модель.
+    """
     model_path = os.path.join(_project_root(), "models", "salary_predictor.pkl")
     if not os.path.exists(model_path):
         return None
-    from src.ml.salary_predictor import SalaryPredictor
-    return SalaryPredictor.load(model_path)
+    try:
+        from src.ml.salary_predictor import SalaryPredictor
+        return SalaryPredictor.load(model_path)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Не удалось загрузить модель: %s", e)
+        return None
 
 
 def _get_unique_sorted(series):
@@ -83,15 +93,19 @@ def view_salary_predictor(service=None):
         st.error(f"Ошибка загрузки данных: {e}")
         return
 
-    # Загружаем модель заранее (кешируется)
-    predictor = _load_model()
-
     tab_predict, tab_train = st.tabs(["🎯 Прогноз", "⚙️ Обучение модели"])
 
     # =============================================
     # Вкладка ПРОГНОЗ
     # =============================================
     with tab_predict:
+        predictor = _load_model()
+        if predictor is None:
+            st.warning(
+                "⚠️ Модель не найдена или несовместима с текущей версией окружения. "
+                "Перейдите на вкладку **⚙️ Обучение модели** и обучите её — это займёт несколько минут."
+            )
+
         # --- Опции из данных ---
         regions = []
         roles = []

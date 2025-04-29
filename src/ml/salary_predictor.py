@@ -400,15 +400,54 @@ class SalaryPredictor:
             return rf_pred
 
     def save(self, path):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'wb') as f:
-            pickle.dump(self, f)
+        """Сохраняет предиктор.
+
+        CatBoost сохраняется нативным форматом (<path>.cbm) — он переносим
+        между версиями библиотеки. Остальные модели и метаданные идут в pickle.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        cb_model = self.models.pop('catboost', None)
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump(self, f)
+        finally:
+            if cb_model is not None:
+                self.models['catboost'] = cb_model
+
+        if cb_model is not None:
+            cb_path = path.with_suffix('.cbm')
+            cb_model.save_model(str(cb_path))
+            logger.info(f"CatBoost сохранён нативно: {cb_path}")
+
         logger.info(f"Модель сохранена: {path}")
 
     @classmethod
     def load(cls, path):
+        """Загружает предиктор.
+
+        Сначала пробует загрузить CatBoost из нативного файла (.cbm) рядом с
+        pickle — это переносимо между версиями. Если .cbm нет (старый формат),
+        CatBoost берётся прямо из pickle и может упасть при несовместимости.
+        """
+        path = Path(path)
         with open(path, 'rb') as f:
             model = pickle.load(f)
+
+        cb_path = path.with_suffix('.cbm')
+        if cb_path.exists():
+            cb = CatBoostRegressor()
+            cb.load_model(str(cb_path))
+            model.models['catboost'] = cb
+            logger.info(f"CatBoost загружен нативно: {cb_path}")
+        else:
+            logger.warning(
+                "Нативный .cbm не найден — CatBoost загружен из pickle. "
+                "Пересохраните модель командой train_models для устранения "
+                "возможных проблем совместимости."
+            )
+
         # Совместимость: старые модели без новых полей
         if not hasattr(model, 'te_col_mapping'):
             model.te_col_mapping = {}
@@ -433,5 +472,6 @@ class SalaryPredictor:
             model.best_r2 = None
         if not hasattr(model, 'ensemble_weights'):
             model.ensemble_weights = {}
+
         logger.info(f"Модель загружена: {path}")
         return model

@@ -21,8 +21,9 @@ services:
       - ./finaldata:/app/finaldata:ro
       # Clustering cache is web-owned; parser must never touch it.
       - cache_data:/app/data/cache
-      # Models volume: baked into image on first run, persists retraining.
-      - models_data:/app/models
+      # Bind mount: models trained inside Docker are saved directly to ./models/
+      # on the host, so they survive rebuilds and are version-consistent.
+      - ./models:/app/models
     env_file: .env
     restart: unless-stopped
     depends_on:
@@ -46,4 +47,3 @@ services:
 volumes:
   raw_data:
   cache_data:
-  models_data:
