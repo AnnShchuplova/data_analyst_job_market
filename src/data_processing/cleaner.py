@@ -125,7 +125,7 @@ class DataCleaner:
         df = df.copy()
         
         skill_keywords = {
-            'SQL': ['sql', 'SQL', 'баз данных', 'запросы', 'postgresql', 'mysql', 'microsoft sql', 'ms sql', 'tsql', 'pl/sql', 'no sql'],
+            'SQL': ['sql', 'SQL', 'баз данных', 'запросы', 'postgresql', 'mysql', 'microsoft sql', 'ms sql', ' tsql ', 'pl/sql', 'no sql'],
             'Python': ['python', 'питон', 'pandas', 'numpy', 'scikit-learn', 'scikit', 'sklearn', 'matplotlib', 'seaborn', 'jupyter'],
             'R': [' r ', 'r язык', 'r,', 'r.', 'rstudio', 'shiny', 'tidyverse'],
             
@@ -156,7 +156,7 @@ class DataCleaner:
             'Kafka': ['kafka', 'apache kafka'],
             'Apache NiFi': ['nifi', 'apache nifi'],
             
-            'AWS': ['aws', 'amazon web services', 's3', 'redshift', 'athena', 'glue', 'quicksight'],
+            'AWS': ['aws', 'amazon web services', ' s3 ', 'redshift', 'athena', 'glue', 'quicksight'],
             'Google Cloud': ['gcp', 'google cloud', 'bigquery', 'looker studio', 'data studio'],
             'Azure': ['azure', 'microsoft azure', 'synapse', 'azure data factory'],
             'Yandex Cloud': ['yandex cloud', 'yandex.cloud'],
@@ -179,8 +179,8 @@ class DataCleaner:
             
             'Java': ['java'],
             'Scala': ['scala'],
-            'JavaScript': ['javascript', 'js', 'node.js', 'nodejs'],
-            'TypeScript': ['typescript', 'ts'],
+            'JavaScript': ['javascript', ' js ', 'node.js', 'nodejs'],
+            'TypeScript': ['typescript', ' ts '],
             'C++': ['c++', 'с++'],
             'C#': ['c#', 'c sharp'],
             
@@ -199,7 +199,7 @@ class DataCleaner:
             'Финансовая аналитика': ['финанс', 'бухгалтер', 'экономическ', 'kpi', 'roi', 'cac', 'ltv'],
             'Маркетинговая аналитика': ['маркетинг', 'конверсия', 'трафик', 'cpc', 'cpm', 'ctr'],
             'Продуктовая аналитика': ['продукт', 'юнит-экономика', 'retention', 'churn'],
-            'Веб-аналитика': ['веб-аналитик', 'google analytics', 'ga', 'yandex metrika', 'метрика'],
+            'Веб-аналитика': ['веб-аналитик', 'google analytics', ' ga ', 'yandex metrika', 'метрика'],
             'Мобильная аналитика': ['mobile analytics', 'appsflyer', 'adjust', 'firebase'],
             
             'API': ['api', 'rest api', 'graphql'],
