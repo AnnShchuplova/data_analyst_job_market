@@ -4,6 +4,7 @@ import numpy as np
 import logging
 import json
 from datetime import datetime
+import ast
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,13 +20,64 @@ class DataCleaner:
         
         df = pd.DataFrame(data)
         logger.info(f"Загружено {len(df)} вакансий аналитиков")
+        df = self._convert_string_dicts(df)
+
         return df
     
+    def _convert_string_dicts(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        def safe_convert(value):
+            if value is None:
+                return value
+
+            if isinstance(value, (list, dict)) and len(value) == 0:
+                return value
+            
+            try:
+                if isinstance(value, float) and np.isnan(value):
+                    return value
+            except:
+                pass
+            
+            try:
+                if pd.isna(value):
+                    return value
+            except (ValueError, TypeError):
+                pass
+            
+            if isinstance(value, (dict, list)):
+                return value
+            
+            if isinstance(value, str):
+                value = value.strip()
+                
+                if (value.startswith('{') and value.endswith('}')) or \
+                (value.startswith('[') and value.endswith(']')):
+                    try:
+                        return ast.literal_eval(value)
+                    except:
+                        try:
+                            value = value.replace("'", '"')
+                            value = value.replace('None', 'null')
+                            value = value.replace('True', 'true').replace('False', 'false')
+                            return json.loads(value)
+                        except:
+                            return value
+            return value
+        
+        for column in df.columns:
+            try:
+                df[column] = df[column].apply(safe_convert)
+            except Exception as e:
+                logger.warning(f"Ошибка при обработке колонки {column}: {e}")
+        
+        return df
+    
+
+    
     def clean_salary(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Очистка данных о зарплате
-        Сохраняет ВСЕ вакансии, даже без зарплаты
-        """
+        
         df = df.copy()
         
         if 'salary' in df.columns:
@@ -144,6 +196,161 @@ class DataCleaner:
     
         return df
     
+    def clean_type_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'type' in df.columns:
+            df['type_id'] = df['type'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['type_name'] = df['type'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+        
+        return df
+    
+    def clean_department_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'department' in df.columns:
+            df['department_id'] = df['department'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['department_name'] = df['department'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_schedule_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'schedule' in df.columns:
+            df['schedule_id'] = df['schedule'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['schedule_name'] = df['schedule'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_employment_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'employment' in df.columns:
+            df['employment_id'] = df['employment'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['employment_name'] = df['employment'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_professional_roles(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'professional_roles' in df.columns:
+            df['main_role_id'] = df['professional_roles'].apply(
+                lambda x: x[0].get('id') if isinstance(x, list) and len(x) > 0 else None
+            )
+            df['main_role_name'] = df['professional_roles'].apply(
+                lambda x: x[0].get('name') if isinstance(x, list) and len(x) > 0 else None
+            )
+        
+        return df
+
+    def clean_address_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        
+        df = df.copy()
+        
+        if 'address' in df.columns:
+            df['address_city'] = df['address'].apply(
+                lambda x: x.get('city') if isinstance(x, dict) else None
+            )
+            df['address_street'] = df['address'].apply(
+                lambda x: x.get('street') if isinstance(x, dict) else None
+            )
+            df['address_building'] = df['address'].apply(
+                lambda x: x.get('building') if isinstance(x, dict) else None
+            )
+            df['address_raw'] = df['address'].apply(
+                lambda x: x.get('raw') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_snippet_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        
+        df = df.copy()
+        
+        if 'snippet' in df.columns:
+            df['requirement'] = df['snippet'].apply(
+                lambda x: x.get('requirement') if isinstance(x, dict) else None
+            )
+            df['responsibility'] = df['snippet'].apply(
+                lambda x: x.get('responsibility') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_work_format_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        
+        df = df.copy()
+        
+        if 'work_format' in df.columns:
+            df['work_format_name'] = df['work_format'].apply(
+                lambda x: x[0].get('name') if isinstance(x, list) and len(x) > 0 else None
+            )
+            df['work_format_id'] = df['work_format'].apply(
+                lambda x: x[0].get('id') if isinstance(x, list) and len(x) > 0 else None
+            )
+        
+        return df
+
+    def clean_working_hours_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'working_hours' in df.columns:
+            df['working_hours_name'] = df['working_hours'].apply(
+                lambda x: x[0].get('name') if isinstance(x, list) and len(x) > 0 else None
+            )
+        
+        return df
+
+    def clean_work_schedule_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'work_schedule_by_days' in df.columns:
+            df['work_schedule_name'] = df['work_schedule_by_days'].apply(
+                lambda x: x[0].get('name') if isinstance(x, list) and len(x) > 0 else None
+            )
+        
+        return df
+
+    def clean_employment_form_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        
+        df = df.copy()
+        
+        if 'employment_form' in df.columns:
+            df['employment_form_id'] = df['employment_form'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['employment_form_name'] = df['employment_form'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+        
+        return df
+
+    def clean_salary_range_field(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        if 'salary_range' in df.columns:
+            logger.debug(f"данные уже извлечены в salary_ поля")
+        
+        return df       
+    
     def clean_employer(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
@@ -197,7 +404,61 @@ class DataCleaner:
     
         return df
     
-    def run_full_clean(self, input_file: str, output_file: str = None, remove_outliers: bool = False):
+    def remove_json_fields(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        fields_to_remove = []
+        
+        service_fields = [
+            'response_url', 'sort_point_distance', 'apply_alternate_url',
+            'show_logo_in_search', 'show_contacts', 'insider_interview',
+            'alternate_url', 'relations', 'branding', 'brand_snippet',
+            'video_vacancy', 'adv_response_url', 'is_adv_vacancy',
+            'adv_context', 'url', 'apply_alternate_url',
+            'contacts', 'working_days', 'working_time_intervals',
+            'working_time_modes', 'fly_in_fly_out_duration',
+            'civil_law_contracts', 'night_shifts', 'accept_incomplete_resumes',
+            'internship', 'accept_temporary', 'created_at', 'archived'
+        ]
+        
+        field_mappings = {
+            'salary': ['salary_from', 'salary_to', 'salary_currency'],
+            'experience': ['experience_id', 'experience_name'],
+            'employer': ['employer_name', 'employer_id'],
+            'area': ['area_name', 'area_id'],
+            'type': ['type_id', 'type_name'],
+            'schedule': ['schedule_id', 'schedule_name'],
+            'employment': ['employment_id', 'employment_name'],
+            'professional_roles': ['main_role_id', 'main_role_name'],
+            'address': ['address_city', 'address_street', 'address_building', 'address_raw'],
+            'key_skills': ['skills_list', 'skills_count'],
+            'salary_range': [],
+            'snippet': ['requirement', 'responsibility'],
+            'work_format': ['work_format_name', 'work_format_id'],
+            'working_hours': ['working_hours_name'],
+            'work_schedule_by_days': ['work_schedule_name'],
+            'employment_form': ['employment_form_id', 'employment_form_name'],
+            'department': ['department_id', 'department_name']
+        }
+        
+        for original_field, extracted_fields in field_mappings.items():
+            if original_field in df.columns:
+                has_extracted = any(field in df.columns for field in extracted_fields)
+                if has_extracted or not extracted_fields:  
+                    fields_to_remove.append(original_field)
+        
+        for field in service_fields:
+            if field in df.columns:
+                fields_to_remove.append(field)
+        
+        if fields_to_remove:
+            existing_fields = [f for f in fields_to_remove if f in df.columns]
+            df = df.drop(columns=existing_fields)
+            logger.info(f"Удалено {len(existing_fields)} JSON/служебных полей")
+        
+        return df
+    
+    def run_full_clean(self, input_file: str, output_file: str = None, remove_outliers: bool = False, remove_json: bool = True):
         
         logger.info(f"Начало очистки: {input_file}")
         
@@ -208,13 +469,29 @@ class DataCleaner:
         df = self.extract_skills(df)    
         df = self.clean_dates(df)       
         df = self.clean_employer(df)    
-        df = self.clean_area(df)       
+        df = self.clean_area(df)   
+        df = self.clean_type_field(df)
+        df = self.clean_schedule_field(df)
+        df = self.clean_employment_field(df)
+        df = self.clean_professional_roles(df)
+        df = self.clean_address_field(df) 
+
+        df = self.clean_snippet_field(df)
+        df = self.clean_work_format_field(df)
+        df = self.clean_working_hours_field(df)
+        df = self.clean_work_schedule_field(df)
+        df = self.clean_employment_form_field(df)
+        df = self.clean_salary_range_field(df)
+        df = self.clean_department_field(df)
+
+        if remove_json:
+            df = self.remove_json_fields(df)   
     
         df = self.remove_outliers_optional(df, remove_outliers)
 
         if output_file is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = f"data/processed/cleaned_vacancies_{timestamp}.csv"
+            output_file = f"data/processed/new_cleaned_vacancies_{timestamp}.csv"
         
         df.to_csv(output_file, index=False, encoding='utf-8')
         logger.info(f"Очищенные данные сохранены: {output_file}")
