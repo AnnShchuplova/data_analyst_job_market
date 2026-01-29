@@ -131,25 +131,45 @@ class DataCleaner:
             df['experience_name'] = df['experience'].apply(
                 lambda x: x.get('name') if isinstance(x, dict) else None
             )
+
+            def extract_min_experience(exp_dict):
+                if not isinstance(exp_dict, dict):
+                    return None
+                
+                exp_id = exp_dict.get('id')
+                min_mapping = {
+                    'noExperience': 0, # минмиальные
+                    'between1And3': 1,    
+                    'between3And6': 3,       
+                    'moreThan6': 6          
+                }
+                return min_mapping.get(exp_id, None)
             
+            df['min_experience_years'] = df['experience'].apply(extract_min_experience)
             
-            def estimate_years(exp_id):
-                if exp_id == 'noExperience':
-                    return 0
-                elif exp_id == 'between1And3':
-                    return 2  
-                elif exp_id == 'between3And6':
-                    return 4.5  
-                elif exp_id == 'moreThan6':
-                    return 8 
-                else:
-                    return np.nan
+
+            def extract_avg_experience(exp_dict):
+                if not isinstance(exp_dict, dict):
+                    return None
+                exp_id = exp_dict.get('id')
+                avg_mapping = {
+                    'noExperience': 0,      # средние
+                    'between1And3': 2,      
+                    'between3And6': 4,      
+                    'moreThan6': 8         
+                }
+                return avg_mapping.get(exp_id, None)
             
-            df['estimated_experience_years'] = df['experience_id'].apply(estimate_years)
+            df['avg_experience_years'] = df['experience'].apply(extract_avg_experience)
         
         if 'experience_name' in df.columns:
             exp_counts = df['experience_name'].value_counts()
             logger.info(f"Опыт работы: {exp_counts.to_dict()}")
+            
+            if 'min_experience_years' in df.columns:
+                avg_min = df['min_experience_years'].mean()
+                avg_avg = df['avg_experience_years'].mean()
+                logger.info(f"Средний минимальный опыт: {avg_min:.1f} лет, Средний опыт: {avg_avg:.1f} лет")
         
         return df
     
