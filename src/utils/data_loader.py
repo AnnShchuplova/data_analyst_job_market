@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import pandas as pd
 import logging
@@ -30,6 +31,12 @@ def simplify_job_name(name):
     return 'Other'
 
 def load_vacancies_data():
+    if getattr(sys, 'frozen', False):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    data_dir = os.path.join(base_dir, 'data', 'processed')
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     data_dir = os.path.join(base_dir, 'data', 'processed')
 
