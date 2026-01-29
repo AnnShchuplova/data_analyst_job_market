@@ -28,36 +28,29 @@ def view_home(service):
     st.markdown("---")
     st.subheader("Сводка по базе данных")
 
-    # Получаем ОБЪЕКТ HomeStats
     stats = service.get_home_statistics()
 
     m1, m2, m3, m4 = st.columns(4)
 
     with m1:
-        # БЫЛО: val = stats.get('total_vacancies', 0)  <-- ОШИБКА
-        # СТАЛО:
         val = stats.total_vacancies
         st.metric("Собрано вакансий", f"{val:,}".replace(",", " "))
 
     with m2:
-        # СТАЛО:
         val = stats.with_salary
         total = stats.total_vacancies
         perc = (val / total * 100) if total > 0 else 0
         st.metric("С указанной ЗП", f"{val:,}".replace(",", " "), f"{perc:.0f}%")
 
     with m3:
-        # СТАЛО:
         val = stats.avg_salary
         display = f"{val // 1000}K ₽" if val > 100000 else f"{val} ₽"
         st.metric("Средняя ЗП", display)
 
     with m4:
-        # СТАЛО:
         val = stats.active_vacancies
         st.metric("Активных (30 дн)", f"{val:,}".replace(",", " "))
 
-    # СТАЛО (поле называется last_updated, согласно модели):
     st.caption(f"📅 Обновлено: {stats.last_updated}")
 
     st.markdown("---")

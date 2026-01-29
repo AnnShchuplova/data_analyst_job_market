@@ -5,7 +5,6 @@ def view_salary_predictor(service):
 
     col_input, col_result = st.columns([1, 2], gap="large")
 
-    # Левая колонка: Ввод данных
     with col_input:
         with st.container(border=True):
             st.subheader("⚙️ Параметры")
@@ -17,7 +16,7 @@ def view_salary_predictor(service):
             location = st.selectbox("Местоположение", ["Москва", "Санкт-Петербург", "Удаленно", "Релокация"])
 
             st.write("Навыки")
-            # st.pills доступен в Streamlit 1.40+, если версия старая - используйте multiselect
+
             skills = st.multiselect("Выберите стек",
                                     ["Python", "SQL", "Tableau", "PowerBI", "Spark", "Docker"],
                                     default=["Python", "SQL"])
@@ -25,7 +24,6 @@ def view_salary_predictor(service):
             st.write("")
             calc_btn = st.button("РАССЧИТАТЬ ЗАРПЛАТУ", type="primary", use_container_width=True)
 
-    # Правая колонка: Результаты
     with col_result:
         with st.container(border=True):
             if calc_btn:
@@ -34,7 +32,6 @@ def view_salary_predictor(service):
 
                 st.subheader("Результат оценки")
 
-                # Основная цифра
                 st.markdown(f"<h1 style='font-size: 60px; margin:0;'>{result.currency}{result.predicted_salary:,}</h1>",
                             unsafe_allow_html=True)
                 st.caption(
@@ -43,11 +40,9 @@ def view_salary_predictor(service):
                 st.divider()
 
                 st.write("**Позиция относительно рынка:**")
-                # График распределения (Histogram)
                 st.bar_chart(result.market_comparison_chart, height=250)
 
                 st.success(f"Вы можете претендовать на зарплату выше средней для {exp} лет опыта!")
             else:
-                # Заглушка до нажатия кнопки (пустое состояние)
                 st.info("👈 Заполните параметры слева и нажмите кнопку расчета, чтобы увидеть график.")
-                for _ in range(8): st.write("")  # Просто заполнить место
+                for _ in range(8): st.write("")
