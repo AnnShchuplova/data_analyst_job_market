@@ -173,26 +173,132 @@ class DataCleaner:
         
         return df
     
+    def extract_skills_from_text(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        skill_keywords = {
+            'SQL': ['sql', 'SQL', 'баз данных', 'запросы', 'postgresql', 'mysql', 'microsoft sql', 'ms sql', ' tsql ', 'pl/sql', 'no sql'],
+            'Python': ['python', 'питон', 'pandas', 'numpy', 'scikit-learn', 'scikit', 'sklearn', 'matplotlib', 'seaborn', 'jupyter'],
+            'R': [' r ', 'r язык', 'r,', 'r.', 'rstudio', 'shiny', 'tidyverse'],
+            
+            'PostgreSQL': ['postgresql', 'postgres'],
+            'MySQL': ['mysql'],
+            'MongoDB': ['mongodb', 'mongo'],
+            'ClickHouse': ['clickhouse'],
+            'Greenplum': ['greenplum'],
+            'Oracle': ['oracle database', 'oracle db'],
+            'MS SQL Server': ['microsoft sql server', 'mssql', 'sql server'],
+            'SQLite': ['sqlite'],
+            'Redis': ['redis'],
+            'Cassandra': ['cassandra'],
+            
+            'Power BI': ['power bi', 'powerbi', 'power bi,', 'power bi.', 'microsoft power bi'],
+            'Tableau': ['tableau'],
+            'DataLens': ['datalens', 'yandex datalens'],
+            'Qlik': ['qlik', 'qlikview', 'qliksense'],
+            'Looker': ['looker'],
+            'Metabase': ['metabase'],
+            'Superset': ['superset', 'apache superset'],
+            'Redash': ['redash'],
+            
+            'Apache Airflow': ['airflow', 'apache airflow'],
+            'dbt': ['dbt', 'data build tool'],
+            'Apache Spark': ['spark', 'apache spark', 'pyspark', 'spark sql'],
+            'Hadoop': ['hadoop', 'hdfs', 'mapreduce'],
+            'Kafka': ['kafka', 'apache kafka'],
+            'Apache NiFi': ['nifi', 'apache nifi'],
+            
+            'AWS': ['aws', 'amazon web services', ' s3 ', 'redshift', 'athena', 'glue', 'quicksight'],
+            'Google Cloud': ['gcp', 'google cloud', 'bigquery', 'looker studio', 'data studio'],
+            'Azure': ['azure', 'microsoft azure', 'synapse', 'azure data factory'],
+            'Yandex Cloud': ['yandex cloud', 'yandex.cloud'],
+            
+            'Excel': ['excel', 'ms excel', 'microsoft excel', 'таблиц', 'формул', 'vlookup', 'сводные таблицы', 'макросы'],
+            'Google Sheets': ['google sheets', 'google таблиц'],
+            'PowerPoint': ['powerpoint', 'презентац', 'слайд'],
+            'Google Slides': ['google slides'],
+
+            'Статистика': ['статистик', 'a/b тест', 'математик', 'вероятност', 'дисперсия', 'регрессия', 'корреляция'],
+            'Машинное обучение': ['машинн', 'ml', 'machine learning', 'нейронные сети', 'классификация', 'кластеризация'],
+            'Прогнозное моделирование': ['прогноз', 'forecast', 'временные ряды', 'time series'],
+            'A/B тестирование': ['a/b тест', 'ab тест', 'сплит тест'],
+            'Построение дашбордов': ['дашборд', 'dashboard', 'панель', 'мониторинг'],
+            
+            'Git': ['git', 'github', 'gitlab', 'bitbucket'],
+            'Docker': ['docker', 'контейнер'],
+            'Linux': ['linux', 'unix', 'bash', 'shell'],
+            'Jira': ['jira', 'confluence'],
+            
+            'Java': ['java'],
+            'Scala': ['scala'],
+            'JavaScript': ['javascript', ' js ', 'node.js', 'nodejs'],
+            'TypeScript': ['typescript', ' ts '],
+            'C++': ['c++', 'с++'],
+            'C#': ['c#', 'c sharp'],
+            
+            'SAS': ['sas'],
+            'SPSS': ['spss'],
+            'MATLAB': ['matlab'],
+            'KNIME': ['knime'],
+            'Alteryx': ['alteryx'],
+            
+            'Аналитическое мышление': ['аналитическ', 'логическ', 'критическ мышлен'],
+            'Коммуникация': ['коммуникац', 'общен', 'презентац', 'переговоры'],
+            'Управление проектами': ['управлен проект', 'project management', 'agile', 'scrum', 'kanban'],
+            'Работа в команде': ['команд', 'teamwork', 'коллектив'],
+            'Решение проблем': ['решен проблем', 'problem solving'],
+            
+            'Финансовая аналитика': ['финанс', 'бухгалтер', 'экономическ', 'kpi', 'roi', 'cac', 'ltv'],
+            'Маркетинговая аналитика': ['маркетинг', 'конверсия', 'трафик', 'cpc', 'cpm', 'ctr'],
+            'Продуктовая аналитика': ['продукт', 'юнит-экономика', 'retention', 'churn'],
+            'Веб-аналитика': ['веб-аналитик', 'google analytics', ' ga ', 'yandex metrika', 'метрика'],
+            'Мобильная аналитика': ['mobile analytics', 'appsflyer', 'adjust', 'firebase'],
+            
+            'API': ['api', 'rest api', 'graphql'],
+            'JSON': ['json'],
+            'XML': ['xml'],
+            'CSV': ['csv'],
+            'Excel VBA': ['vba', 'excel vba', 'макросы'],
+            'Power Query': ['power query', 'powerquery'],
+            'DAX': ['dax'],
+            'MDX': ['mdx'],
+        }
+        
+        def find_skills(text):
+            if pd.isna(text):
+                return []
+            text_lower = str(text).lower()
+            found = []
+            for skill, keywords in skill_keywords.items():
+                if any(keyword in text_lower for keyword in keywords):
+                    found.append(skill)
+            return found
+        
+        if 'requirement' in df.columns:
+            for idx, row in df.iterrows():
+                current_skills = row['skills_list'] if 'skills_list' in df.columns else []
+                new_skills = find_skills(row.get('requirement'))
+                all_skills = list(set(current_skills + new_skills))
+                df.at[idx, 'skills_list'] = all_skills
+
+        if 'responsibility' in df.columns:
+            for idx, row in df.iterrows():
+                current_skills = row.get('skills_list', [])
+                new_skills = find_skills(row.get('responsibility'))
+                all_skills = list(set(current_skills + new_skills))
+                df.at[idx, 'skills_list'] = all_skills
+    
+        
+        return df
+    
     def extract_skills(self, df: pd.DataFrame) -> pd.DataFrame:
         
         df = df.copy()
-        
-        if 'key_skills' in df.columns:
-            df['skills_list'] = df['key_skills'].apply(
-                lambda x: [skill.get('name') for skill in x] 
-                if isinstance(x, list) 
-                else []
-            )
-            
-            df['skills_count'] = df['skills_list'].apply(len)
-           
-            if df['skills_list'].notna().sum() > 10:
-                top_skills = self._get_top_skills(df, top_n=15)
-                for skill in top_skills:
-                    col_name = f'skill_{skill.replace(" ", "_").replace("/", "_").lower()}'
-                    df[col_name] = df['skills_list'].apply(
-                        lambda x: 1 if skill in x else 0
-                    )
+
+        df['skills_list'] = [[] for _ in range(len(df))]
+        df = self.extract_skills_from_text(df)
+        df['skills_count'] = df['skills_list'].apply(len)
+
         return df
     
     def _get_top_skills(self, df, top_n=15):
@@ -486,7 +592,7 @@ class DataCleaner:
         
         df = self.clean_salary(df)    
         df = self.clean_experience(df) 
-        df = self.extract_skills(df)    
+            
         df = self.clean_dates(df)       
         df = self.clean_employer(df)    
         df = self.clean_area(df)   
@@ -497,6 +603,8 @@ class DataCleaner:
         df = self.clean_address_field(df) 
 
         df = self.clean_snippet_field(df)
+        df = self.extract_skills(df)
+        
         df = self.clean_work_format_field(df)
         df = self.clean_working_hours_field(df)
         df = self.clean_work_schedule_field(df)
