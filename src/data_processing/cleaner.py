@@ -9,52 +9,51 @@ import ast
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 class DataCleaner:
     def __init__(self):
         pass
-
+    
     def load_data(self, filepath: str) -> pd.DataFrame:
         """Загрузка JSON данных в DataFrame"""
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-
+        
         df = pd.DataFrame(data)
         logger.info(f"Загружено {len(df)} вакансий аналитиков")
         df = self._convert_string_dicts(df)
 
         return df
-
+    
     def _convert_string_dicts(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-
+        
         def safe_convert(value):
             if value is None:
                 return value
 
             if isinstance(value, (list, dict)) and len(value) == 0:
                 return value
-
+            
             try:
                 if isinstance(value, float) and np.isnan(value):
                     return value
             except:
                 pass
-
+            
             try:
                 if pd.isna(value):
                     return value
             except (ValueError, TypeError):
                 pass
-
+            
             if isinstance(value, (dict, list)):
                 return value
-
+            
             if isinstance(value, str):
                 value = value.strip()
-
+                
                 if (value.startswith('{') and value.endswith('}')) or \
-                        (value.startswith('[') and value.endswith(']')):
+                (value.startswith('[') and value.endswith(']')):
                     try:
                         return ast.literal_eval(value)
                     except:
