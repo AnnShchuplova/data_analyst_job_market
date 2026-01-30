@@ -14,7 +14,6 @@ def get_all_professional_roles():
         for role in roles:
             role_id = role.get('id')
             role_name = role.get('name')
-            #print(f"ID: {role_id} {role_name}")
             
             if "аналит" in role_name.lower():
                 print(f"{role_name} (ID: {role_id})")
