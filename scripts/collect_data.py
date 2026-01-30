@@ -67,34 +67,10 @@ def collect_raw_data(pages_per_role=3, total_pages_limit=200):
     
     print(f"Собрано уникальных вакансий: {len(all_vacancies)}")
     print(f"Файл c данными {filename}")
- 
-    #if all_vacancies:
-    #    print("Примеры собранных вакансий:")
-    #    for i, vac in enumerate(all_vacancies[:5], 1):
-    #        name = vac.get('name', 'Без названия')
-    #        roles = vac.get('professional_roles', [])
-    #        role_names = [r.get('name', '?') for r in roles]
+
     
     return all_vacancies, filename
 
-#def collect_simple(pages=20):
-#    parser = HHParser(delay=0.3)
-#    vacancies = parser.fetch_vacancies(
-#        query="аналитик",
-#        pages=pages,
-#        only_with_salary=False
-#    )
-    
-#    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-#    filename = f"data/raw/raw_dataset_simple_{timestamp}.json"
-    
-#    with open(filename, "w", encoding="utf-8") as f:
-#        json.dump(vacancies, f, ensure_ascii=False, indent=2)
-    
-#    print(f"Собрано {len(vacancies)} вакансий")
-#    print(f"Файл {filename}")
-    
-#    return vacancies, filename
 
 if __name__ == "__main__":
     vacancies, filename = collect_raw_data(pages_per_role=5, total_pages_limit=30)

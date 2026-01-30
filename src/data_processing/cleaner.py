@@ -120,15 +120,68 @@ class DataCleaner:
             return salary_from
         else:
             return (salary_from + salary_to) / 2
-    
+
+    def clean_experience(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+
+        if 'experience' in df.columns:
+            df['experience_id'] = df['experience'].apply(
+                lambda x: x.get('id') if isinstance(x, dict) else None
+            )
+            df['experience_name'] = df['experience'].apply(
+                lambda x: x.get('name') if isinstance(x, dict) else None
+            )
+
+            def extract_min_experience(exp_dict):
+                if not isinstance(exp_dict, dict):
+                    return None
+
+                exp_id = exp_dict.get('id')
+                min_mapping = {
+                    'noExperience': 0,
+                    'between1And3': 1,
+                    'between3And6': 3,
+                    'moreThan6': 6
+                }
+                return min_mapping.get(exp_id, None)
+
+            df['min_experience_years'] = df['experience'].apply(extract_min_experience)
+
+            def extract_avg_experience(exp_dict):
+                if not isinstance(exp_dict, dict):
+                    return None
+                exp_id = exp_dict.get('id')
+                avg_mapping = {
+                    'noExperience': 0,
+                    'between1And3': 2,
+                    'between3And6': 4,
+                    'moreThan6': 8
+                }
+                return avg_mapping.get(exp_id, None)
+
+            df['avg_experience_years'] = df['experience'].apply(extract_avg_experience)
+
+        if 'experience_name' in df.columns:
+            exp_counts = df['experience_name'].value_counts()
+            logger.info(f"Опыт работы: {exp_counts.to_dict()}")
+
+            if 'min_experience_years' in df.columns:
+                avg_min = df['min_experience_years'].mean()
+                avg_avg = df['avg_experience_years'].mean()
+                logger.info(f"Средний минимальный опыт: {avg_min:.1f} лет, Средний опыт: {avg_avg:.1f} лет")
+
+        return df
+
     def extract_skills_from_text(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        
+
         skill_keywords = {
-            'SQL': ['sql', 'SQL', 'баз данных', 'запросы', 'postgresql', 'mysql', 'microsoft sql', 'ms sql', ' tsql ', 'pl/sql', 'no sql'],
-            'Python': ['python', 'питон', 'pandas', 'numpy', 'scikit-learn', 'scikit', 'sklearn', 'matplotlib', 'seaborn', 'jupyter'],
+            'SQL': ['sql', 'SQL', 'баз данных', 'запросы', 'postgresql', 'mysql', 'microsoft sql', 'ms sql', ' tsql ',
+                    'pl/sql', 'no sql'],
+            'Python': ['python', 'питон', 'pandas', 'numpy', 'scikit-learn', 'scikit', 'sklearn', 'matplotlib',
+                       'seaborn', 'jupyter'],
             'R': [' r ', 'r язык', 'r,', 'r.', 'rstudio', 'shiny', 'tidyverse'],
-            
+
             'PostgreSQL': ['postgresql', 'postgres'],
             'MySQL': ['mysql'],
             'MongoDB': ['mongodb', 'mongo'],
@@ -139,7 +192,7 @@ class DataCleaner:
             'SQLite': ['sqlite'],
             'Redis': ['redis'],
             'Cassandra': ['cassandra'],
-            
+
             'Power BI': ['power bi', 'powerbi', 'power bi,', 'power bi.', 'microsoft power bi'],
             'Tableau': ['tableau'],
             'DataLens': ['datalens', 'yandex datalens'],
@@ -148,60 +201,62 @@ class DataCleaner:
             'Metabase': ['metabase'],
             'Superset': ['superset', 'apache superset'],
             'Redash': ['redash'],
-            
+
             'Apache Airflow': ['airflow', 'apache airflow'],
             'dbt': ['dbt', 'data build tool'],
             'Apache Spark': ['spark', 'apache spark', 'pyspark', 'spark sql'],
             'Hadoop': ['hadoop', 'hdfs', 'mapreduce'],
             'Kafka': ['kafka', 'apache kafka'],
             'Apache NiFi': ['nifi', 'apache nifi'],
-            
+
             'AWS': ['aws', 'amazon web services', ' s3 ', 'redshift', 'athena', 'glue', 'quicksight'],
             'Google Cloud': ['gcp', 'google cloud', 'bigquery', 'looker studio', 'data studio'],
             'Azure': ['azure', 'microsoft azure', 'synapse', 'azure data factory'],
             'Yandex Cloud': ['yandex cloud', 'yandex.cloud'],
-            
-            'Excel': ['excel', 'ms excel', 'microsoft excel', 'таблиц', 'формул', 'vlookup', 'сводные таблицы', 'макросы'],
+
+            'Excel': ['excel', 'ms excel', 'microsoft excel', 'таблиц', 'формул', 'vlookup', 'сводные таблицы',
+                      'макросы'],
             'Google Sheets': ['google sheets', 'google таблиц'],
             'PowerPoint': ['powerpoint', 'презентац', 'слайд'],
             'Google Slides': ['google slides'],
 
             'Статистика': ['статистик', 'a/b тест', 'математик', 'вероятност', 'дисперсия', 'регрессия', 'корреляция'],
-            'Машинное обучение': ['машинн', 'ml', 'machine learning', 'нейронные сети', 'классификация', 'кластеризация'],
+            'Машинное обучение': ['машинн', 'ml', 'machine learning', 'нейронные сети', 'классификация',
+                                  'кластеризация'],
             'Прогнозное моделирование': ['прогноз', 'forecast', 'временные ряды', 'time series'],
             'A/B тестирование': ['a/b тест', 'ab тест', 'сплит тест'],
             'Построение дашбордов': ['дашборд', 'dashboard', 'панель', 'мониторинг'],
-            
+
             'Git': ['git', 'github', 'gitlab', 'bitbucket'],
             'Docker': ['docker', 'контейнер'],
             'Linux': ['linux', 'unix', 'bash', 'shell'],
             'Jira': ['jira', 'confluence'],
-            
+
             'Java': ['java'],
             'Scala': ['scala'],
             'JavaScript': ['javascript', ' js ', 'node.js', 'nodejs'],
             'TypeScript': ['typescript', ' ts '],
             'C++': ['c++', 'с++'],
             'C#': ['c#', 'c sharp'],
-            
+
             'SAS': ['sas'],
             'SPSS': ['spss'],
             'MATLAB': ['matlab'],
             'KNIME': ['knime'],
             'Alteryx': ['alteryx'],
-            
+
             'Аналитическое мышление': ['аналитическ', 'логическ', 'критическ мышлен'],
             'Коммуникация': ['коммуникац', 'общен', 'презентац', 'переговоры'],
             'Управление проектами': ['управлен проект', 'project management', 'agile', 'scrum', 'kanban'],
             'Работа в команде': ['команд', 'teamwork', 'коллектив'],
             'Решение проблем': ['решен проблем', 'problem solving'],
-            
+
             'Финансовая аналитика': ['финанс', 'бухгалтер', 'экономическ', 'kpi', 'roi', 'cac', 'ltv'],
             'Маркетинговая аналитика': ['маркетинг', 'конверсия', 'трафик', 'cpc', 'cpm', 'ctr'],
             'Продуктовая аналитика': ['продукт', 'юнит-экономика', 'retention', 'churn'],
             'Веб-аналитика': ['веб-аналитик', 'google analytics', ' ga ', 'yandex metrika', 'метрика'],
             'Мобильная аналитика': ['mobile analytics', 'appsflyer', 'adjust', 'firebase'],
-            
+
             'API': ['api', 'rest api', 'graphql'],
             'JSON': ['json'],
             'XML': ['xml'],
@@ -211,7 +266,7 @@ class DataCleaner:
             'DAX': ['dax'],
             'MDX': ['mdx'],
         }
-        
+
         def find_skills(text):
             if pd.isna(text):
                 return []
@@ -221,7 +276,7 @@ class DataCleaner:
                 if any(keyword in text_lower for keyword in keywords):
                     found.append(skill)
             return found
-        
+
         if 'requirement' in df.columns:
             for idx, row in df.iterrows():
                 current_skills = row['skills_list'] if 'skills_list' in df.columns else []
@@ -235,20 +290,30 @@ class DataCleaner:
                 new_skills = find_skills(row.get('responsibility'))
                 all_skills = list(set(current_skills + new_skills))
                 df.at[idx, 'skills_list'] = all_skills
-    
-        
+
         return df
     
     def extract_skills(self, df: pd.DataFrame) -> pd.DataFrame:
         
         df = df.copy()
-
-        df['skills_list'] = [[] for _ in range(len(df))]
-        df = self.extract_skills_from_text(df)
-        df['skills_count'] = df['skills_list'].apply(len)
-
-        return df
         
+        if 'key_skills' in df.columns:
+            df['skills_list'] = df['key_skills'].apply(
+                lambda x: [skill.get('name') for skill in x] 
+                if isinstance(x, list) 
+                else []
+            )
+            
+            df['skills_count'] = df['skills_list'].apply(len)
+           
+            if df['skills_list'].notna().sum() > 10:
+                top_skills = self._get_top_skills(df, top_n=15)
+                for skill in top_skills:
+                    col_name = f'skill_{skill.replace(" ", "_").replace("/", "_").lower()}'
+                    df[col_name] = df['skills_list'].apply(
+                        lambda x: 1 if skill in x else 0
+                    )
+        return df
     
     def _get_top_skills(self, df, top_n=15):
         all_skills = []
@@ -506,7 +571,7 @@ class DataCleaner:
             'employment': ['employment_id', 'employment_name'],
             'professional_roles': ['main_role_id', 'main_role_name'],
             'address': ['address_city', 'address_street', 'address_building', 'address_raw'],
-            'key_skills': ['skills_list', 'skills_count']  + [col for col in df.columns if col.startswith('skill_')],
+            'key_skills': ['skills_list', 'skills_count'],
             'salary_range': [],
             'snippet': ['requirement', 'responsibility'],
             'work_format': ['work_format_name', 'work_format_id'],
@@ -532,32 +597,20 @@ class DataCleaner:
             logger.info(f"Удалено {len(existing_fields)} JSON/служебных полей")
         
         return df
-    
-    def clean_experience(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
-    
-        if 'experience' in df.columns:
-            df['experience_id'] = df['experience'].apply(
-                lambda x: x.get('id') if isinstance(x, dict) else None
-            )
-            df['experience_name'] = df['experience'].apply(
-                lambda x: x.get('name') if isinstance(x, dict) else None
-            )
-        
-        return df
-    
-    def run_full_clean(self, input_file: str, output_file: str = None, remove_outliers: bool = False, remove_json: bool = True):
-        
+
+    def run_full_clean(self, input_file: str, output_file: str = None, remove_outliers: bool = False,
+                       remove_json: bool = True):
+
         logger.info(f"Начало очистки: {input_file}")
         
         df = self.load_data(input_file)
-        
-        df = self.clean_salary(df)    
-        df = self.clean_experience(df) 
-        
-        df = self.clean_dates(df)       
-        df = self.clean_employer(df)    
-        df = self.clean_area(df)   
+
+        df = self.clean_salary(df)
+        df = self.clean_experience(df)
+
+        df = self.clean_dates(df)
+        df = self.clean_employer(df)
+        df = self.clean_area(df)
         df = self.clean_type_field(df)
         df = self.clean_schedule_field(df)
         df = self.clean_employment_field(df)
@@ -565,8 +618,7 @@ class DataCleaner:
         df = self.clean_address_field(df) 
 
         df = self.clean_snippet_field(df)
-        
-        df = self.extract_skills(df)    
+        df = self.extract_skills(df)
 
         df = self.clean_work_format_field(df)
         df = self.clean_working_hours_field(df)
@@ -632,11 +684,11 @@ class DataCleaner:
 
 if __name__ == "__main__":
     cleaner = DataCleaner()
-    
-    input_file = "data/processed/analyst_vacancies_analyst_vacancies_20260128_165113.json"
-    
+
+    input_file = "../../data/processed/analyst_vacancies_20260128_150512.json"
+    print(f"Текущая рабочая директория: {os.getcwd()}")
     if not os.path.exists(input_file):
         print(f"Файл не найден: {input_file}")
     else:
         df_cleaned = cleaner.run_full_clean(input_file, remove_outliers=False)
-        print("\nОчистка завершена") 
+        print("\nОчистка завершена")
