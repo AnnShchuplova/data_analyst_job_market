@@ -120,9 +120,6 @@ def save_test_report(raw_vacancies, filtered_vacancies, total_time):
     except Exception as e:
         print(f"ошибка, не удалось сохранить отчет: {e}")
 
-#def quick_test():
-#    return test_full_pipeline(pages=2)
-
 def full_test():
     return test_full_pipeline(pages=10)
 
