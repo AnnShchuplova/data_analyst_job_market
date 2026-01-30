@@ -16,7 +16,7 @@ class HHParser:
         
     def fetch_vacancies(self, 
                        query: str = "аналитик",
-                       area: int = 113, # код Росиии
+                       area: int = 113,
                        experience: str = None,
                        pages: int = 20,
                        only_with_salary: bool = True,
@@ -73,7 +73,7 @@ class HHParser:
         
         role_ids = [str(role.get("id")) for role in roles]
         
-        analyst_role_ids = ["10", "134", "148", "150", "156", "163", "164"] # аналитические роли
+        analyst_role_ids = ["10", "134", "148", "150", "156", "163", "164"]
         has_analyst_role = any(role_id in analyst_role_ids for role_id in role_ids)
         
         return has_analyst_role
