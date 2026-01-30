@@ -4,13 +4,6 @@ def filter_data_analyst_vacancies(vacancies):
     
     for vac in vacancies:
         name = vac.get("name", "").lower()
-        
-        #if "professional_roles" in vac:
-        #   roles = vac["professional_roles"]
-        #   role_ids = [str(role.get("id")) for role in roles]
-            
-        #   analyst_role_ids = ["10", "134", "148", "150", "156", "163", "164"] # аналитические роли
-        #   has_analyst_role = any(role_id in analyst_role_ids for role_id in role_ids)
 
         include_phrases = [
             "аналитик данных",
@@ -32,7 +25,7 @@ def filter_data_analyst_vacancies(vacancies):
             "юрист", "менеджер", "водитель", "оператор",
             "продавец", "кассир", "бухгалтер", "экономист",
             "консультант", "администратор", "hr", "рекрутер"
-        ] # иначе собирает ненужные вакансии
+        ]
         
         has_include_phrase = any(phrase in name for phrase in include_phrases)
         has_exclude_word = any(word in name for word in exclude_words)
