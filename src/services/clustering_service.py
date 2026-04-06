@@ -126,41 +126,15 @@ class ClusteringService:
         cluster_entities = []
         for i in range(k):
             cluster_data = df_result[df_result['cluster'] == i]
-
-            # --- Title ---
             title_parts = []
             if 'name' in cluster_data.columns:
                 total_count = len(cluster_data)
                 for name, count in cluster_data['name'].value_counts().items():
-                    if (count / total_count) >= 0.25:
+                    if (count / total_count) >= 0.30:
                         title_parts.append(name)
+
             title_base = " / ".join(title_parts) if title_parts else f"Группа #{i + 1}"
 
-            # --- Experience tier ---
-            experience_tier = "—"
-            if 'avg_experience_years' in cluster_data.columns:
-                exp_vals = cluster_data['avg_experience_years'].dropna()
-                if not exp_vals.empty:
-                    mean_exp = exp_vals.mean()
-                    if 'min_experience_years' in cluster_data.columns:
-                        std_exp = cluster_data['min_experience_years'].dropna().std()
-                        std_exp = 0 if pd.isna(std_exp) else std_exp
-                    else:
-                        std_exp = 999
-                    if std_exp < 1.5:
-                        if mean_exp < 1.0:
-                            experience_tier = "Junior"
-                        elif mean_exp <= 3.0:
-                            experience_tier = "Middle"
-                        else:
-                            experience_tier = "Senior"
-
-            if experience_tier != "—":
-                final_title = f"{title_base} · {experience_tier}"
-            else:
-                final_title = title_base
-
-            # --- Salary tag ---
             cluster_median = cluster_data['salary_avg'].median()
             salary_tag = ""
             if pd.notnull(cluster_median) and q70 > 0:
@@ -171,16 +145,7 @@ class ClusteringService:
                 else:
                     salary_tag = "📉 Маленькая ЗП"
 
-            # --- Salary range (P10–P90) ---
-            sal_series = cluster_data['salary_avg'].dropna()
-            salary_min = int(sal_series.quantile(0.1)) if len(sal_series) > 3 else None
-            salary_max = int(sal_series.quantile(0.9)) if len(sal_series) > 3 else None
-
-            # --- Average salary string ---
-            avg_sal = cluster_data['salary_avg'].mean()
-            avg_sal_str = f"{int(avg_sal):,} ₽".replace(",", " ") if pd.notnull(avg_sal) else "Не указана"
-
-            # --- Top skills ---
+            final_title = f"{title_base} ({salary_tag})" if salary_tag else title_base
             top_skills = []
             if 'skills_list' in cluster_data.columns:
                 all_skills = []
@@ -192,46 +157,29 @@ class ClusteringService:
                                 all_skills.extend(parsed)
                         elif isinstance(val, list):
                             all_skills.extend(val)
-                    except Exception:
+                    except:
                         continue
                 if all_skills:
-                    top_skills = [skill for skill, _ in Counter(all_skills).most_common(5)]
-
-            # --- Remote rate ---
+                    top_skills = [skill for skill, count in Counter(all_skills).most_common(5)]
             remote_percentage = 0.0
             if 'schedule_name' in cluster_data.columns:
                 total_vacs = len(cluster_data)
                 if total_vacs > 0:
                     remote_count = cluster_data['schedule_name'].astype(str).str.contains('удален', case=False).sum()
                     remote_percentage = (remote_count / total_vacs) * 100
+            avg_sal = cluster_data['salary_avg'].mean()
+            avg_sal_str = f"{int(avg_sal):,} ₽".replace(",", " ") if pd.notnull(avg_sal) else "Не указана"
 
-            # --- Dominant categorical values ---
-            def _mode_str(col):
-                if col in cluster_data.columns:
-                    mode = cluster_data[col].dropna().mode()
-                    return str(mode.iloc[0]) if not mode.empty else ""
-                return ""
-
-            dominant_schedule = _mode_str('schedule_name')
-            dominant_employment = _mode_str('employment_name')
-            dominant_area = _mode_str('area_name')
-
-            # --- Description ---
             desc_parts = []
-            if dominant_schedule:
-                desc_parts.append(dominant_schedule)
-            if dominant_employment:
-                desc_parts.append(dominant_employment)
-            if 'min_experience_years' in num_cols:
-                mean_exp_val = cluster_data['min_experience_years'].mean()
-                if pd.notnull(mean_exp_val):
-                    desc_parts.append(f"опыт ~{mean_exp_val:.1f} г.")
+            for col in cat_cols:
+                if not cluster_data[col].mode().empty:
+                    desc_parts.append(str(cluster_data[col].mode()[0]))
+            for col in num_cols:
+                mean_val = cluster_data[col].mean()
+                if col == 'min_experience_years':
+                    desc_parts.append(f"Опыт ~{mean_val:.1f} г.")
 
-            description = "Преимущественно " + ", ".join(desc_parts) if desc_parts else "Смешанная группа"
-            if dominant_area:
-                description += f". Регион: {dominant_area}."
-            if len(cluster_data) < 10:
-                description += " (малая выборка)"
+            description = ", ".join(desc_parts) if desc_parts else "Смешанная группа"
 
             entity = ClusterEntity(
                 id=i + 1,
@@ -240,14 +188,7 @@ class ClusteringService:
                 vacancies_count=len(cluster_data),
                 avg_salary=avg_sal_str,
                 skills=top_skills,
-                remote_rate=remote_percentage,
-                salary_min=salary_min,
-                salary_max=salary_max,
-                salary_tag=salary_tag,
-                experience_tier=experience_tier,
-                dominant_area=dominant_area,
-                dominant_schedule=dominant_schedule,
-                dominant_employment=dominant_employment,
+                remote_rate=remote_percentage
             )
             cluster_entities.append(entity)
 
