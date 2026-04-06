@@ -29,14 +29,7 @@ class ClusterEntity:
     vacancies_count: int
     avg_salary: str
     skills: List[str]
-    remote_rate: float = 0.0
-    salary_min: Optional[int] = None
-    salary_max: Optional[int] = None
-    salary_tag: str = ""
-    experience_tier: str = "—"
-    dominant_area: str = ""
-    dominant_schedule: str = ""
-    dominant_employment: str = ""
+    remote_rate: float
 
 @dataclass
 class ClusteringResult:
