@@ -16,10 +16,10 @@ class ClusteringService:
         self.df = df
         self.feature_map = {
             "Зарплата": "salary_avg",
-            "Минимальный опыт": "min_experience_years",
-            "Название вакансии": "name",
+            "Минимальный требуемый опыт": "min_experience_years",
+            "Название профессии": "name",
             "График работы": "schedule_name",
-            "Местность": "area_name"
+            "Регион РФ": "area_name"
         }
 
     def perform_clustering(self, selected_features: list, k_range: range) -> ClusteringResult:
@@ -126,24 +126,31 @@ class ClusteringService:
         cluster_entities = []
         for i in range(k):
             cluster_data = df_result[df_result['cluster'] == i]
+            total_count = len(cluster_data)
+
             title_parts = []
             if 'name' in cluster_data.columns:
-                total_count = len(cluster_data)
                 for name, count in cluster_data['name'].value_counts().items():
                     if (count / total_count) >= 0.30:
                         title_parts.append(name)
 
             title_base = " / ".join(title_parts) if title_parts else f"Группа #{i + 1}"
 
+            popular_regions = []
+            if 'area_name' in cluster_data.columns and total_count > 0:
+                for area, count in cluster_data['area_name'].value_counts().items():
+                    if (count / total_count) >= 0.30:
+                        popular_regions.append(str(area))
+
             cluster_median = cluster_data['salary_avg'].median()
             salary_tag = ""
             if pd.notnull(cluster_median) and q70 > 0:
                 if cluster_median > q70:
-                    salary_tag = "🤑 Высокая ЗП"
+                    salary_tag = "🟢 Высокая ЗП"
                 elif cluster_median > q30:
-                    salary_tag = "💵 Нормальная ЗП"
+                    salary_tag = "🟡 Средняя ЗП"
                 else:
-                    salary_tag = "📉 Маленькая ЗП"
+                    salary_tag = "🔴 Низкая ЗП"
 
             final_title = f"{title_base} ({salary_tag})" if salary_tag else title_base
             top_skills = []
@@ -170,6 +177,12 @@ class ClusteringService:
             avg_sal = cluster_data['salary_avg'].mean()
             avg_sal_str = f"{int(avg_sal):,} ₽".replace(",", " ") if pd.notnull(avg_sal) else "Не указана"
 
+            median_sal = cluster_data['salary_avg'].median()
+            median_sal_str = f"{int(median_sal):,} ₽".replace(",", " ") if pd.notnull(median_sal) else "Не указана"
+
+            sal_known = cluster_data['salary_avg'].notna().sum()
+            salary_rate = (sal_known / total_count * 100) if total_count > 0 else 0.0
+
             desc_parts = []
             for col in cat_cols:
                 if not cluster_data[col].mode().empty:
@@ -188,7 +201,10 @@ class ClusteringService:
                 vacancies_count=len(cluster_data),
                 avg_salary=avg_sal_str,
                 skills=top_skills,
-                remote_rate=remote_percentage
+                remote_rate=remote_percentage,
+                median_salary=median_sal_str,
+                popular_regions=popular_regions,
+                salary_rate=salary_rate,
             )
             cluster_entities.append(entity)
 

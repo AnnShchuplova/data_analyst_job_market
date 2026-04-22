@@ -30,7 +30,25 @@ def view_clusters(mock_service=None):
     checksum = get_checksum()
     service = get_service(checksum)
 
-    st.markdown("<h1 style='text-align: center;'>🧩 УМНАЯ КЛАСТЕРИЗАЦИЯ</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🧩 КЛАСТЕРИЗАЦИЯ ВАКАНСИЙ</h1>", unsafe_allow_html=True)
+
+    st.markdown(
+        """
+Сервис автоматически разбивает вакансии на группы со схожими характеристиками.
+Выберите признаки, по которым хотите сгруппировать рынок (зарплата, регион, профессия, график, опыт),
+и алгоритм сам подберёт оптимальное число кластеров и покажет карточку по каждой группе.
+
+**Как читать карточку:**
+- **Название кластера** — составляется из тех профессий, которые встречаются не менее чем в 30% вакансий группы.
+  Если ни одна профессия не доминирует, кластер получает имя «Группа #N».
+- К названию добавляется метка уровня зарплаты: 🟢 высокая, 🟡 средняя или 🔴 низкая — относительно всего рынка.
+  Уровень определяется по медианной зарплате кластера: выше 70-го перцентиля рынка → высокая, ниже 30-го → низкая, между ними → средняя.
+- **Самые популярные регионы** под названием — регионы, в которых находится не менее 30% вакансий кластера.
+- **Ср. ЗП / Медианная ЗП** помогают увидеть, искажена ли средняя редкими крупными предложениями.
+- **Офис / Удалёнка** — доля вакансий с удалённым форматом работы.
+- **Skills** — пять самых частых навыков в группе.
+        """
+    )
 
     if service is None or service.df.empty:
         st.error("❌ Не удалось загрузить данные. Проверьте папку data/processed.")
@@ -41,8 +59,8 @@ def view_clusters(mock_service=None):
         with c1:
             selected_features = st.multiselect(
                 "Признаки для группировки:",
-                options=["Зарплата", "Минимальный опыт", "Название вакансии", "График работы", "Местность"],
-                default=["Зарплата", "Название вакансии"]
+                options=["Зарплата", "Минимальный требуемый опыт", "Название профессии", "График работы", "Регион РФ"],
+                default=["Зарплата", "Название профессии"]
             )
         with c2:
             k_range = st.slider("Диапазон кластеров:", 2, 20, (2, 12))
@@ -104,12 +122,19 @@ def view_clusters(mock_service=None):
                 with cols[idx]:
                     with st.container(border=True):
                         st.markdown(f"#### {cluster.title}")
-                        st.caption(cluster.description)
+                        if cluster.popular_regions:
+                            regions_str = ", ".join(cluster.popular_regions)
+                            st.caption(f"Самые популярные регионы: {regions_str}")
+                        else:
+                            st.caption("Нет выраженной привязки к региону")
                         st.divider()
 
-                        k1, k2 = st.columns(2)
-                        k1.metric("Вакансий", cluster.vacancies_count)
-                        k2.metric("Ср. ЗП", cluster.avg_salary)
+                        r1c1, r1c2 = st.columns(2)
+                        r1c1.metric("Вакансий", cluster.vacancies_count)
+                        r1c2.metric("Ср. ЗП", cluster.avg_salary)
+                        r2c1, r2c2 = st.columns(2)
+                        r2c1.metric("С указанной ЗП", f"{cluster.salary_rate:.0f}%")
+                        r2c2.metric("Медианная ЗП", cluster.median_salary)
 
                         rem_pct = cluster.remote_rate
                         off_pct = 100 - rem_pct
