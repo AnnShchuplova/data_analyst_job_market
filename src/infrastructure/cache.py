@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 
+# Bump this whenever ClusterEntity/ClusteringResult fields or service logic change.
+# Any existing cache entries with a different version become unreachable (new key)
+# and will be ignored; they can be deleted from data/cache/ at any time.
+_CACHE_VERSION = "2"
+
 
 class ClusteringCache:
     def __init__(self, cache_dir: Path = _DEFAULT_CACHE_DIR):
@@ -42,7 +47,7 @@ class ClusteringCache:
             logger.warning("Failed to write cache entry: %s", exc)
 
     def _make_key(self, data_checksum: str, features: list, k_range: range) -> str:
-        raw = f"{data_checksum}|{','.join(sorted(features))}|{k_range.start}-{k_range.stop}"
+        raw = f"v{_CACHE_VERSION}|{data_checksum}|{','.join(sorted(features))}|{k_range.start}-{k_range.stop}"
         return hashlib.md5(raw.encode()).hexdigest()
 
     def _path(self, key: str) -> Path:
