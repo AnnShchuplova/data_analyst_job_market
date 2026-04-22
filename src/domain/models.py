@@ -30,6 +30,9 @@ class ClusterEntity:
     avg_salary: str
     skills: List[str]
     remote_rate: float
+    median_salary: str = "Не указана"
+    popular_regions: List[str] = field(default_factory=list)
+    salary_rate: float = 0.0
 
 @dataclass
 class ClusteringResult:
