@@ -11,6 +11,7 @@ from app.views.home import view_home
 from app.views.aggregation import view_aggregation
 from app.views.clusters import view_clusters
 from app.views.predict_salary import view_salary_predictor
+from app.views.arima import view_arima
 
 st.set_page_config(
     page_title="DataTrack",
@@ -20,19 +21,36 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* 1. Скрываем боковое меню (Sidebar) */
-    [data-testid="stSidebarNav"] {display: none;}
-    section[data-testid="stSidebar"] {display: none;}
-
-    /* 2. Скрываем верхнюю полосу (Header) с кнопкой Deploy и меню */
-    header[data-testid="stHeader"] {
-        display: none;
+    /* Прячем sidebar/nav/header ДО первого рендера, чтобы не мигали.
+       !important + visibility + width:0 подавляют все варианты,
+       которые Streamlit успевает показать до подгрузки стилей. */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarNav"],
+    [data-testid="stSidebarCollapsedControl"],
+    section[data-testid="stSidebar"] {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        min-width: 0 !important;
     }
 
-    /* 3. Настраиваем отступы, чтобы контент начинался выше */
-    /* block-container — это основной контейнер страницы */
+    header[data-testid="stHeader"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    #MainMenu,
+    footer {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* Контент занимает всю ширину (без резерва под sidebar) */
+    [data-testid="stAppViewContainer"] > .main {
+        margin-left: 0 !important;
+    }
+
     .block-container {
-        padding-top: 2rem; /* Оставляем немного места, чтобы не прилипало к краю браузера */
+        padding-top: 2rem;
         padding-bottom: 1rem;
     }
 </style>
@@ -46,7 +64,7 @@ def render_top_nav():
             st.markdown("### 🗂️ DataTrack")
 
         with col_nav:
-            nav_home, nav_agg, nav_clus, nav_sal = st.columns(4)
+            nav_home, nav_agg, nav_clus, nav_arima, nav_sal = st.columns(5)
 
             current_page = st.session_state.get('page', 'home')
 
@@ -63,6 +81,11 @@ def render_top_nav():
             if nav_clus.button("🧩 Кластеры", use_container_width=True,
                                type="primary" if current_page == 'clusters' else "secondary"):
                 st.session_state['page'] = 'clusters'
+                st.rerun()
+
+            if nav_arima.button("📈 Тренды (SARIMA)", use_container_width=True,
+                                type="primary" if current_page == 'arima' else "secondary"):
+                st.session_state['page'] = 'arima'
                 st.rerun()
 
             if nav_sal.button("💰 Прогноз ЗП", use_container_width=True,
@@ -88,6 +111,9 @@ def main():
 
     elif page == 'clusters':
         view_clusters()
+
+    elif page == 'arima':
+        view_arima()
 
     elif page == 'salary':
         view_salary_predictor(mock_service)
