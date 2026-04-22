@@ -1,17 +1,34 @@
 import streamlit as st
 import plotly.express as px
-from src.utils.data_loader import load_vacancies_data
+from src.utils.data_loader import load_vacancies_data, compute_data_checksum
 from src.services.clustering_service import ClusteringService
+from src.infrastructure.cache import ClusteringCache
 
 
 @st.cache_resource
-def get_service():
+def get_service(data_checksum: str):
+    # Keyed by checksum so that when parser writes a new CSV, the next checksum
+    # refresh invalidates the cached service and a fresh DataFrame is loaded.
     df = load_vacancies_data()
     return ClusteringService(df) if not df.empty else None
 
 
+@st.cache_resource
+def get_cache() -> ClusteringCache:
+    return ClusteringCache()
+
+
+@st.cache_data(ttl=300)
+def get_checksum() -> str:
+    # TTL 5 min: web auto-detects a new CSV dropped by the parser container
+    # without needing a restart. Short enough to feel fresh, long enough to
+    # avoid re-hashing the file on every rerun.
+    return compute_data_checksum()
+
+
 def view_clusters(mock_service=None):
-    service = get_service()
+    checksum = get_checksum()
+    service = get_service(checksum)
 
     st.markdown("<h1 style='text-align: center;'>🧩 УМНАЯ КЛАСТЕРИЗАЦИЯ</h1>", unsafe_allow_html=True)
 
@@ -33,12 +50,20 @@ def view_clusters(mock_service=None):
         run_btn = st.button("🚀 Запустить анализ", use_container_width=True, type="primary",
                             disabled=len(selected_features) == 0)
     if run_btn:
-        with st.spinner("🧠 Анализируем рынок..."):
-            try:
-                res = service.perform_clustering(selected_features, range(k_range[0], k_range[1] + 1))
-                st.session_state['cluster_result'] = res
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
+        cache = get_cache()
+        k = range(k_range[0], k_range[1] + 1)
+
+        cached = cache.get(checksum, selected_features, k)
+        if cached is not None:
+            st.session_state['cluster_result'] = cached
+        else:
+            with st.spinner("🧠 Анализируем рынок..."):
+                try:
+                    res = service.perform_clustering(selected_features, k)
+                    cache.put(checksum, selected_features, k, res)
+                    st.session_state['cluster_result'] = res
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
 
     if 'cluster_result' in st.session_state:
         res = st.session_state['cluster_result']

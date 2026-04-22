@@ -1,0 +1,45 @@
+# Two-service deployment:
+#   web    — public Streamlit dashboard (reads processed CSVs, read-only).
+#   parser — private hh.ru collector + cleaner, cron-driven, no ports.
+#
+# Data flows parser -> processed_data -> web. No other integration surface.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    image: analyst-market-web:latest
+    container_name: analyst-market-web
+    ports:
+      - "8501:8501"
+    volumes:
+      # Parser writes here; web only needs to read it.
+      - processed_data:/app/data/processed:ro
+      # Clustering cache is web-owned; parser must never touch it.
+      - cache_data:/app/data/cache
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      # Not a hard dep — web can boot with an empty volume and show
+      # "no data" gracefully. depends_on is purely for startup ordering.
+      - parser
+
+  parser:
+    build:
+      context: .
+      dockerfile: docker/parser.Dockerfile
+    image: analyst-market-parser:latest
+    container_name: analyst-market-parser
+    volumes:
+      # Raw JSONs stay private to parser — web has no business reading them.
+      - raw_data:/app/data/raw
+      - processed_data:/app/data/processed
+    env_file: .env
+    restart: unless-stopped
+    # Deliberately no `ports:` — this service must not be reachable externally.
+
+volumes:
+  processed_data:
+  raw_data:
+  cache_data:
