@@ -1,0 +1,7 @@
+# Monthly pipeline refresh: 1st of every month at 03:00 (container TZ=Europe/Moscow).
+# Re-declare PATH and PYTHONPATH: cron runs with an empty env by default.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PYTHONPATH=/app
+LOG_LEVEL=INFO
+
+0 3 1 * * root cd /app && /usr/local/bin/python -m scripts.run_pipeline >> /var/log/pipeline.log 2>&1

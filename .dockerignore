@@ -1,0 +1,39 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+env
+venv
+
+# Editor / IDE
+.idea
+.vscode
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+.claude
+.env
+.env.local
+data/raw/
+data/processed/
+data/cache/
+reports/
+tests/
+notebooks/
+*.ipynb
+build/
+dist/
+*.spec
+
+# Docs / misc
+README.md
+*.md
