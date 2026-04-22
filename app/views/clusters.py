@@ -1,4 +1,5 @@
 import streamlit as st
+import plotly.express as px
 from src.utils.data_loader import load_vacancies_data
 from src.services.clustering_service import ClusteringService
 
@@ -47,6 +48,26 @@ def view_clusters(mock_service=None):
         m1.metric("Алгоритм", res.method_name)
         m2.metric("Кластеров", res.n_clusters)
         m3.metric("Silhouette Score", f"{res.silhouette_score:.3f}")
+
+        if res.k_scores:
+            with st.expander("📈 Выбор оптимального K (Silhouette)", expanded=False):
+                ks = [s[0] for s in res.k_scores]
+                scores = [s[1] for s in res.k_scores]
+                fig = px.line(
+                    x=ks, y=scores,
+                    markers=True,
+                    labels={"x": "K (число кластеров)", "y": "Silhouette Score"},
+                    title="Silhouette Score по числу кластеров"
+                )
+                fig.add_vline(
+                    x=res.n_clusters,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text=f"Выбрано K={res.n_clusters}",
+                    annotation_position="top right"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
         st.divider()
 
         clusters = res.clusters
