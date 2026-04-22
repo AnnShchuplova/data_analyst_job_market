@@ -52,7 +52,7 @@ class ClusteringService:
             return self._run_kprototypes(X, X_proc, num_cols, cat_cols, k_range)
 
     def _run_kmeans(self, X_orig, X_proc, num_cols, k_range):
-        best_k, best_score = self._find_best_k(
+        best_k, best_score, k_scores = self._find_best_k(
             k_range,
             lambda k: KMeans(n_clusters=k, n_init=3, random_state=42),
             X_proc,
@@ -60,10 +60,10 @@ class ClusteringService:
         )
         model = KMeans(n_clusters=best_k, n_init=10, random_state=42)
         clusters = model.fit_predict(X_proc)
-        return self._build_result(X_orig, clusters, best_k, best_score, "K-Means", num_cols, [])
+        return self._build_result(X_orig, clusters, best_k, best_score, "K-Means", num_cols, [], k_scores)
 
     def _run_kmodes(self, X_orig, X_proc, cat_cols, k_range):
-        best_k, best_score = self._find_best_k(
+        best_k, best_score, k_scores = self._find_best_k(
             k_range,
             lambda k: KModes(n_clusters=k, init='Cao', n_init=1, verbose=0),
             X_proc,
@@ -71,13 +71,13 @@ class ClusteringService:
         )
         model = KModes(n_clusters=best_k, init='Cao', n_init=5, verbose=0)
         clusters = model.fit_predict(X_proc)
-        return self._build_result(X_orig, clusters, best_k, best_score, "K-Modes", [], cat_cols)
+        return self._build_result(X_orig, clusters, best_k, best_score, "K-Modes", [], cat_cols, k_scores)
 
     def _run_kprototypes(self, X_orig, X_proc, num_cols, cat_cols, k_range):
         cat_indices = [X_proc.columns.get_loc(c) for c in cat_cols]
         dist_matrix = gower.gower_matrix(X_proc)
 
-        best_k, best_score = self._find_best_k(
+        best_k, best_score, k_scores = self._find_best_k(
             k_range,
             lambda k: KPrototypes(n_clusters=k, init='Cao', n_init=1, verbose=0, random_state=42),
             X_proc.values,
@@ -89,29 +89,33 @@ class ClusteringService:
         final_model = KPrototypes(n_clusters=best_k, init='Cao', n_init=3, verbose=0, random_state=42)
         clusters = final_model.fit_predict(X_proc.values, categorical=cat_indices)
 
-        return self._build_result(X_orig, clusters, best_k, best_score, "K-Prototypes", num_cols, cat_cols)
+        return self._build_result(X_orig, clusters, best_k, best_score, "K-Prototypes", num_cols, cat_cols, k_scores)
 
     def _find_best_k(self, k_range, model_factory, X_train, metric, X_score=None, fit_params=None):
         best_score = -1
         best_k = k_range.start
-        if X_score is None: X_score = X_train
-        if fit_params is None: fit_params = {}
+        k_scores = []
+        if X_score is None:
+            X_score = X_train
+        if fit_params is None:
+            fit_params = {}
 
         for k in k_range:
             try:
                 model = model_factory(k)
                 labels = model.fit_predict(X_train, **fit_params)
-                if len(set(labels)) < 2 or len(set(labels)) >= len(labels): continue
+                if len(set(labels)) < 2 or len(set(labels)) >= len(labels):
+                    continue
                 score = silhouette_score(X_score, labels, metric=metric)
+                k_scores.append((k, float(score)))
                 if score > best_score:
                     best_score = score
                     best_k = k
             except Exception:
                 continue
-        return best_k, max(best_score, 0)
+        return best_k, max(best_score, 0), k_scores
 
-
-    def _build_result(self, X_orig, clusters, k, score, method_name, num_cols, cat_cols):
+    def _build_result(self, X_orig, clusters, k, score, method_name, num_cols, cat_cols, k_scores):
         df_result = self.df.loc[X_orig.index].copy()
         df_result['cluster'] = clusters
 
@@ -192,5 +196,6 @@ class ClusteringService:
             method_name=method_name,
             n_clusters=k,
             silhouette_score=score,
-            clusters=cluster_entities
+            clusters=cluster_entities,
+            k_scores=k_scores,
         )
