@@ -23,9 +23,11 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 
 # Register crontab.
+# Files in /etc/cron.d/ are read directly by cron — no `crontab` install needed.
+# sed strips Windows CRLF line endings that break cron parsing on Linux.
 COPY docker/parser-crontab /etc/cron.d/parser-cron
-RUN chmod 0644 /etc/cron.d/parser-cron \
-    && crontab /etc/cron.d/parser-cron \
+RUN sed -i 's/\r//' /etc/cron.d/parser-cron \
+    && chmod 0644 /etc/cron.d/parser-cron \
     && touch /var/log/pipeline.log
 
 RUN mkdir -p /app/data/raw /app/data/processed
