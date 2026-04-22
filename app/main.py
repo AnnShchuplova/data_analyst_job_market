@@ -1,204 +1,97 @@
 import streamlit as st
+import sys
 import os
-import pandas as pd
-from datetime import datetime, timedelta
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+sys.path.append(root_dir)
+
+from src.services.mock import MockService
+from app.views.home import view_home
+from app.views.aggregation import view_aggregation
+from app.views.clusters import view_clusters
+from app.views.predict_salary import view_salary_predictor
 
 st.set_page_config(
-    page_title="DataTrack - Анализ рынка труда",
-    page_icon="📊",
+    page_title="DataTrack",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-def load_latest_data():
-    try:
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        processed_dir = os.path.join(project_root, "finaldata")
-        
-        if not os.path.exists(processed_dir):
-            st.error(f"Папка '{processed_dir}' не существует")
-            return None
-        csv_files = [f for f in os.listdir(processed_dir) if f.endswith('.csv')]
-        if not csv_files:
-            return None
-        
-        # последний файл
-        latest_file = max(csv_files, key=lambda x: os.path.getmtime(os.path.join(processed_dir, x)))
-        file_path = os.path.join(processed_dir, latest_file)
-        
-        df = pd.read_csv(file_path, encoding='utf-8')
-        return df, latest_file
-        
-    except Exception as e:
-        print(f"Ошибка загрузки данных: {e}")
-        return None
+st.markdown("""
+<style>
+    /* 1. Скрываем боковое меню (Sidebar) */
+    [data-testid="stSidebarNav"] {display: none;}
+    section[data-testid="stSidebar"] {display: none;}
 
-def calculate_statistics(df, filename=None):
-    """Вычисление статистики из данных
-    
-    ИСПРАВЛЕНИЕ: Убрано дублирование логики сканирования processed_dir.
-    Дата файла передаётся через параметр filename из load_latest_data().
-    """
-    if df is None or len(df) == 0:
-        return {
-            'total_vacancies': 0,
-            'with_salary': 0,
-            'avg_salary': 0,
-            'active_vacancies': 0,
-            'date': '—'
-        }
-    
-    stats = {
-        'total_vacancies': len(df)
+    /* 2. Скрываем верхнюю полосу (Header) с кнопкой Deploy и меню */
+    header[data-testid="stHeader"] {
+        display: none;
     }
-    
-    if 'salary_avg' in df.columns:
-        salary_data = df['salary_avg'].dropna()
-        stats['with_salary'] = len(salary_data)
-        if len(salary_data) > 0:
-            stats['avg_salary'] = int(salary_data.mean())
-        else:
-            stats['avg_salary'] = 0
-    else:
-        stats['with_salary'] = 0
-        stats['avg_salary'] = 0
 
-    if 'published_at' in df.columns:
-        try:
-            df['published_at'] = pd.to_datetime(df['published_at'])
-            month_ago = datetime.now() - timedelta(days=30)
-            stats['active_vacancies'] = len(df[df['published_at'] >= month_ago])
-        except Exception:
-            stats['active_vacancies'] = len(df)
-    else:
-        stats['active_vacancies'] = len(df)
+    /* 3. Настраиваем отступы, чтобы контент начинался выше */
+    /* block-container — это основной контейнер страницы */
+    .block-container {
+        padding-top: 2rem; /* Оставляем немного места, чтобы не прилипало к краю браузера */
+        padding-bottom: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    # Дата берётся из имени файла, переданного из load_latest_data()
-    if filename:
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        file_path = os.path.join(project_root, "finaldata", filename)
-        if os.path.exists(file_path):
-            timestamp = os.path.getmtime(file_path)
-            stats['date'] = datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y')
-        else:
-            stats['date'] = '—'
-    else:
-        stats['date'] = '—'
-    
-    return stats
+def render_top_nav():
+    with st.container():
+        col_logo, col_nav = st.columns([1, 5])
 
+        with col_logo:
+            st.markdown("### 🗂️ DataTrack")
+
+        with col_nav:
+            nav_home, nav_agg, nav_clus, nav_sal = st.columns(4)
+
+            current_page = st.session_state.get('page', 'home')
+
+            if nav_home.button("🏠 Главная", use_container_width=True,
+                               type="primary" if current_page == 'home' else "secondary"):
+                st.session_state['page'] = 'home'
+                st.rerun()
+
+            if nav_agg.button("📊 Агрегация", use_container_width=True,
+                              type="primary" if current_page == 'aggregation' else "secondary"):
+                st.session_state['page'] = 'aggregation'
+                st.rerun()
+
+            if nav_clus.button("🧩 Кластеры", use_container_width=True,
+                               type="primary" if current_page == 'clusters' else "secondary"):
+                st.session_state['page'] = 'clusters'
+                st.rerun()
+
+            if nav_sal.button("💰 Прогноз ЗП", use_container_width=True,
+                              type="primary" if current_page == 'salary' else "secondary"):
+                st.session_state['page'] = 'salary'
+                st.rerun()
+
+        st.divider()
 def main():
-    st.title("DataTrack - Анализ рынка труда аналитиков данных")
-    st.markdown("---")
-  
-    with st.sidebar:
-        st.image("https://img.icons8.com/color/96/000000/data-configuration.png", width=80)
-        st.title("DataTrack v1.0")
-        st.markdown("Программа для анализа рынка труда аналитиков данных")
-        st.markdown("---")
-        
-        st.markdown("Навигация")
-        st.markdown("Используйте меню слева для перехода между страницами")
-        
-        st.markdown("---")
-        st.caption("НИУ ВШЭ • Программная инженерия • 2025")
-    
-    st.header("Добро пожаловать в DataTrack!")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("""
-        О проекте
-        
-        **DataTrack** - это программный комплекс для анализа рынка труда 
-        в области аналитики данных на основе данных с платформы HeadHunter.
-        
-        Возможности системы:
-        
-        1. **Агрегация вакансий** - сбор и визуализация данных
-        2. **Кластеризация** - автоматическая группировка вакансий
-        3. **Прогноз зарплат** - ML-модель для предсказания ЗП
-        4. **Анализ трендов** - временные ряды (ARIMA)
-        
-        Быстрый старт
-        
-        1. Перейдите на страницу **Агрегация**
-        2. Загрузите или соберите данные
-        3. Проанализируйте рынок труда
-        """)
-    
-    with col2:
-        st.info("""
-        Команда проекта:
-        - Щуплова А.И. (БПИ237)
-        - Тищенко Н.А. (БПИ247)
-        
-        Курсовой проект
-        НИУ ВШЭ, ФКН
-        """)
-    
-    st.markdown("---")
-    st.subheader("Статистика")
-    
-    data_result = load_latest_data()
-    if data_result:
-        df, filename = data_result
-        stats = calculate_statistics(df, filename=filename)
-    else:
-        stats = calculate_statistics(None)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total = stats['total_vacancies']
-        if total > 0:
-            display_total = f"{total:,}".replace(",", " ")
-            st.metric("Собрано вакансий", display_total)
-        else:
-            st.metric("Собрано вакансий", "0")
-    
-    with col2:
-        with_salary = stats['with_salary']
-        if with_salary > 0:
-            display_salary = f"{with_salary:,}".replace(",", " ")
-            percentage = (with_salary / total * 100) if total > 0 else 0
-            st.metric("С указанной ЗП", display_salary, f"{percentage:.0f}%")
-        else:
-            st.metric("С указанной ЗП", "0")
-    
-    with col3:
-        avg_salary = stats['avg_salary']
-        if avg_salary > 0:
-            if avg_salary >= 100000:
-                display_salary = f"{avg_salary//1000}K ₽"
-            else:
-                display_salary = f"{avg_salary:,} ₽".replace(",", " ")
-            st.metric("Средняя ЗП", display_salary)
-        else:
-            st.metric("Средняя ЗП", "—")
-    
-    with col4:
-        active = stats['active_vacancies']
-        if active > 0:
-            display_active = f"{active:,}".replace(",", " ")
-            st.metric("Вакансий", display_active)
-        else:
-            st.metric("Вакансий", "0")
+    if 'page' not in st.session_state:
+        st.session_state['page'] = 'home'
+    mock_service = MockService()
 
-    st.caption(f"Данные обновлены: {stats['date']}")
-    
+    render_top_nav()
 
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("Обновить статистику", width="stretch"):
-            st.rerun()
-    
-    with col2:
-        if st.button("Собрать новые данные", width="stretch"):
-            st.info("Для сбора данных запустите: python scripts/collect_data.py")
+    page = st.session_state['page']
+
+    if page == 'home':
+        view_home(mock_service)
+
+    elif page == 'aggregation':
+        view_aggregation(mock_service)
+
+    elif page == 'clusters':
+        view_clusters()
+
+    elif page == 'salary':
+        view_salary_predictor(mock_service)
+
 
 if __name__ == "__main__":
     main()
