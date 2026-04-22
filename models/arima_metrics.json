@@ -1,0 +1,21 @@
+{
+  "AIC": 164.65,
+  "BIC": 181.33,
+  "MAE_historical": 30.97,
+  "order": [
+    2,
+    0,
+    2
+  ],
+  "seasonal_order": [
+    1,
+    1,
+    1,
+    7
+  ],
+  "forecast_periods": 10,
+  "data_points": 97,
+  "seasonal_period": 7,
+  "log_transform": true,
+  "timestamp": "2026-04-21 18:52:39"
+}

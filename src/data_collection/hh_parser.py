@@ -14,6 +14,44 @@ class HHParser:
         self.delay = delay
         self.session = requests.Session()
         
+    def _make_request_with_retry(self, params: dict, max_retries: int = 3) -> requests.Response:
+        """Выполнение HTTP-запроса
+        
+        Корректно обрабатывает таймауты, отсутствие интернета,
+        недоступность API с повторными попытками.
+        """
+        last_exception = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.session.get(self.base_url, params=params, timeout=30)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.Timeout as e:
+                last_exception = e
+                logger.warning(f"Таймаут при запросе (попытка {attempt}/{max_retries}): {e}")
+            except requests.exceptions.ConnectionError as e:
+                last_exception = e
+                logger.warning(f"Ошибка соединения (попытка {attempt}/{max_retries}): {e}")
+            except requests.exceptions.HTTPError as e:
+                # Для 4xx ошибок не имеет смысла повторять
+                if response is not None and 400 <= response.status_code < 500:
+                    raise
+                last_exception = e
+                logger.warning(f"HTTP ошибка (попытка {attempt}/{max_retries}): {e}")
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                logger.warning(f"Ошибка запроса (попытка {attempt}/{max_retries}): {e}")
+            
+            if attempt < max_retries:
+                wait_time = 2 ** attempt  # экспоненциальная задержка: 2, 4 сек
+                logger.info(f"Повторная попытка через {wait_time} сек...")
+                time.sleep(wait_time)
+        
+        logger.error(f"Все {max_retries} попытки запроса завершились неудачей")
+        raise requests.exceptions.RequestException(
+            f"Не удалось выполнить запрос после {max_retries} попыток"
+        ) from last_exception
+
     def fetch_vacancies(self, 
                        query: str = "аналитик",
                        area: int = 113, # код Росиии
@@ -38,8 +76,7 @@ class HHParser:
                 params["professional_role"] = professional_role
 
             try:
-                response = self.session.get(self.base_url, params=params)
-                response.raise_for_status()
+                response = self._make_request_with_retry(params)
                 data = response.json()
                 
                 if "items" not in data or not data['items']:
@@ -57,7 +94,7 @@ class HHParser:
                 time.sleep(self.delay)
                 
             except requests.exceptions.RequestException as e:
-                logger.error(f"Ошибка при запросе страницы {page}: {e}")
+                logger.error(f"Ошибка при запросе страницы {page} после всех попыток: {e}")
                 break
         
         logger.info(f"Всего собрано {len(vacancies)} аналитических вакансий")

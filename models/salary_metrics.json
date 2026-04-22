@@ -1,0 +1,12 @@
+{
+  "MAE": 28646.59,
+  "MAE_percent": 19.19,
+  "R2": 0.6729,
+  "RMSE": 40708.58,
+  "mean_salary": 149246.21,
+  "train_size": 1759,
+  "test_size": 311,
+  "algorithm": "catboost + RF ensemble",
+  "n_features": 191,
+  "timestamp": "2026-04-21 00:34:59"
+}
