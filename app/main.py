@@ -13,7 +13,7 @@ st.set_page_config(
 def load_latest_data():
     try:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        processed_dir = os.path.join(project_root, "data", "processed")
+        processed_dir = os.path.join(project_root, "finaldata")
         
         if not os.path.exists(processed_dir):
             st.error(f"Папка '{processed_dir}' не существует")
@@ -33,8 +33,12 @@ def load_latest_data():
         print(f"Ошибка загрузки данных: {e}")
         return None
 
-def calculate_statistics(df):
-    """Вычисление статистики из данных"""
+def calculate_statistics(df, filename=None):
+    """Вычисление статистики из данных
+    
+    ИСПРАВЛЕНИЕ: Убрано дублирование логики сканирования processed_dir.
+    Дата файла передаётся через параметр filename из load_latest_data().
+    """
     if df is None or len(df) == 0:
         return {
             'total_vacancies': 0,
@@ -64,20 +68,20 @@ def calculate_statistics(df):
             df['published_at'] = pd.to_datetime(df['published_at'])
             month_ago = datetime.now() - timedelta(days=30)
             stats['active_vacancies'] = len(df[df['published_at'] >= month_ago])
-        except:
+        except Exception:
             stats['active_vacancies'] = len(df)
     else:
         stats['active_vacancies'] = len(df)
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    processed_dir = os.path.join(project_root, "data", "processed")
-        
-    csv_files = [f for f in os.listdir(processed_dir) if f.endswith('.csv')]
-    if csv_files:
-        latest_file = max(csv_files, key=lambda x: os.path.getmtime(os.path.join(processed_dir, x)))
-        file_path = os.path.join(processed_dir, latest_file)
-        timestamp = os.path.getmtime(file_path)
-        stats['date'] = datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y')
+    # Дата берётся из имени файла, переданного из load_latest_data()
+    if filename:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        file_path = os.path.join(project_root, "finaldata", filename)
+        if os.path.exists(file_path):
+            timestamp = os.path.getmtime(file_path)
+            stats['date'] = datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y')
+        else:
+            stats['date'] = '—'
     else:
         stats['date'] = '—'
     
@@ -140,7 +144,7 @@ def main():
     data_result = load_latest_data()
     if data_result:
         df, filename = data_result
-        stats = calculate_statistics(df)
+        stats = calculate_statistics(df, filename=filename)
     else:
         stats = calculate_statistics(None)
     
@@ -189,11 +193,11 @@ def main():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("Обновить статистику", use_container_width=True):
+        if st.button("Обновить статистику", width="stretch"):
             st.rerun()
     
     with col2:
-        if st.button("Собрать новые данные", use_container_width=True):
+        if st.button("Собрать новые данные", width="stretch"):
             st.info("Для сбора данных запустите: python scripts/collect_data.py")
 
 if __name__ == "__main__":
