@@ -1,172 +1,231 @@
 """
-Скрипт для обучения всех ML-моделей проекта DataTrack.
-
-Обучает:
-1. Модель прогнозирования зарплаты (RandomForest/CatBoost)
-2. Модель кластеризации (KMeans)
-3. Модель анализа временных рядов (ARIMA)
+Скрипт обучения ML-моделей предсказания зарплаты.
 
 Использование:
-    python scripts/train_models.py
-    python scripts/train_models.py --data finaldata/month_dataset.csv --algorithm catboost
+    python scripts/train_models.py                          # Обучение лучшей модели
+    python scripts/train_models.py --compare                # Сравнение всех моделей
+    python scripts/train_models.py --compare --skip-arima   # Сравнение без ARIMA
+
+Данные: ищется последний CSV файл в директории finaldata/
+Целевая переменная: salary_avg
+Навыки: skills_list
 """
 
-import os
-import sys
 import argparse
 import logging
-import numpy as np
-import pandas as pd
-import warnings
-warnings.filterwarnings('ignore')
+import sys
+from pathlib import Path
 
-# Добавляем корень проекта в path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+import pandas as pd
+
+# Добавляем корень проекта в путь для импортов
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_processing.feature_engineering import FeatureEngineer
 from src.ml.salary_predictor import SalaryPredictor
-from src.ml.arima_analyzer import TimeSeriesAnalyzer
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
-def train_salary_model(df: pd.DataFrame, algorithm: str = 'random_forest',
-                       tune: bool = False) -> SalaryPredictor:
-    """Обучение модели прогнозирования зарплаты."""
-    print("\n" + "="*60)
-    print("ОБУЧЕНИЕ МОДЕЛИ ПРОГНОЗИРОВАНИЯ ЗАРПЛАТЫ")
-    print("="*60)
+def find_data_file():
+    """Поиск файла данных в директории finaldata/."""
+    finaldata_dir = PROJECT_ROOT / 'finaldata'
 
-    fe = FeatureEngineer()
-    df_prepared, feature_cols = fe.prepare_dataset_for_regression(df, fit=True)
+    if not finaldata_dir.exists():
+        raise FileNotFoundError(
+            f"Директория с данными не найдена: {finaldata_dir}"
+        )
 
-    predictor = SalaryPredictor()
-    metrics = predictor.train(
-        df_prepared, feature_cols,
-        algorithm=algorithm,
-        tune_hyperparams=tune,
-        remove_outliers=True,
-        salary_range=(20000, 600000)
+    # Ищем CSV файлы с датасетом
+    csv_files = sorted(finaldata_dir.glob('month_dataset_*.csv'))
+
+    if not csv_files:
+        # Пробуем другие паттерны
+        csv_files = sorted(finaldata_dir.glob('*.csv'))
+
+    if not csv_files:
+        raise FileNotFoundError(
+            f"CSV файлы не найдены в {finaldata_dir}"
+        )
+
+    # Берём самый свежий по имени (обычно содержит дату)
+    latest = csv_files[-1]
+    logger.info(f"Найден файл данных: {latest}")
+    return latest
+
+
+def load_data(filepath):
+    """Загрузка и базовая фильтрация данных."""
+    df = pd.read_csv(filepath)
+    logger.info(f"Загружено {len(df)} строк из {filepath}")
+
+    # Проверка обязательных колонок
+    required = ['salary_avg', 'skills_list']
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        available = list(df.columns)
+        logger.error(f"Отсутствуют обязательные колонки: {missing}")
+        logger.error(f"Доступные колонки: {available}")
+        raise ValueError(f"Отсутствуют обязательные колонки: {missing}")
+
+    # Фильтрация: только вакансии с указанной зарплатой
+    before = len(df)
+
+    if 'has_salary' in df.columns:
+        df = df[df['has_salary'] == True].copy()
+
+    df = df[df['salary_avg'].notna()].copy()
+    df = df[df['salary_avg'] > 0].copy()
+
+    after_filter = len(df)
+    removed = before - after_filter
+    logger.info(
+        f"Фильтрация: оставлено {after_filter} строк с зарплатой "
+        f"(убрано {removed} без зарплаты / с нулевой)"
     )
 
-    print(f"\nМетрики:")
-    print(f"  MAE: {metrics['MAE']:,.0f} руб. ({metrics['MAE_percent']:.1f}% от средней ЗП)")
-    print(f"  R2: {metrics['R2']:.4f}")
-    print(f"  RMSE: {metrics['RMSE']:,.0f} руб.")
-    print(f"  Train size: {metrics['train_size']}, Test size: {metrics['test_size']}")
-    print(f"  Features: {metrics['n_features']}")
-    print(f"  Algorithm: {metrics['algorithm']}")
+    # ---- Удаление выбросов зарплаты ----
+    # Абсолютный минимум: ниже 15000₽ — мусорные данные (min=390)
+    MIN_SALARY = 15000
+    before_abs = len(df)
+    df = df[df['salary_avg'] >= MIN_SALARY].copy()
+    after_abs = len(df)
+    logger.info(
+        f"Фильтр abs-min: убрано {before_abs - after_abs} записей < {MIN_SALARY}₽, "
+        f"осталось {after_abs}"
+    )
 
-    if metrics['MAE_percent'] <= 20:
-        print(f"  ✅ MAE в пределах 20% (ТЗ выполнено)")
-    else:
-        print(f"  ⚠️ MAE {metrics['MAE_percent']:.1f}% > 20% (ТЗ не выполнено)")
+    # IQR-метод для верхних выбросов (1.1M и т.д.)
+    q1 = df['salary_avg'].quantile(0.25)
+    q3 = df['salary_avg'].quantile(0.75)
+    iqr = q3 - q1
+    upper_bound = q3 + 1.5 * iqr
 
-    if metrics['R2'] >= 0.7:
-        print(f"  ✅ R2 >= 0.7 (ТЗ выполнено)")
-    else:
-        print(f"  ⚠️ R2 {metrics['R2']:.4f} < 0.7 (ТЗ не выполнено)")
+    before_outlier = len(df)
+    df = df[df['salary_avg'] <= upper_bound].copy()
+    after_outlier = len(df)
 
-    # Важность признаков
-    importance = predictor.get_feature_importance()
-    if importance is not None:
-        print(f"\nТоп-15 признаков:")
-        for _, row in importance.iterrows():
-            print(f"  {row['feature']:35s} {row['importance']:.4f}")
+    logger.info(
+        f"Удаление выбросов (IQR): верхняя граница {upper_bound:.0f}₽, "
+        f"убрано {before_outlier - after_outlier} аномалий, "
+        f"осталось {after_outlier}"
+    )
 
-    # Сохраняем
-    predictor.save()
-    print(f"\nМодель сохранена: models/salary_model.joblib")
-    print(f"Метрики сохранены: models/salary_metrics.json")
+    after = after_outlier
 
-    return predictor
+    if after == 0:
+        raise ValueError(
+            "После фильтрации не осталось строк с зарплатой! "
+            "Проверьте данные в файле."
+        )
 
-def train_arima_model(df: pd.DataFrame) -> TimeSeriesAnalyzer:
-    """Обучение модели SARIMA (Seasonal ARIMA)."""
-    print("\n" + "="*60)
-    print("ОБУЧЕНИЕ МОДЕЛИ SARIMA (Seasonal ARIMA)")
-    print("="*60)
-
-    analyzer = TimeSeriesAnalyzer()
-
-    # Подготовка временного ряда (обрезка до 5 апреля — далее были проблемы со сбором)
-    ts = analyzer.prepare_time_series(df, freq='D', end_date='2026-04-05')
-
-    if len(ts) < 5:
-        print("Недостаточно данных для SARIMA (минимум 5 точек)!")
-        return None
-
-    # Проверка стационарности
-    stationarity = analyzer.check_stationarity(ts)
-    print(f"\nСтационарность: {'Да' if stationarity['is_stationary'] else 'Нет'}")
-    print(f"  ADF statistic: {stationarity['adf_statistic']:.4f}")
-    print(f"  p-value: {stationarity['p_value']:.4f}")
-
-    # Обучение SARIMA (прогноз на 21 день — 3 недели)
-    result = analyzer.train(ts, forecast_periods=21)
-
-    metrics = result['metrics']
-    print(f"\nМетрики:")
-    print(f"  AIC: {metrics['AIC']:.2f}")
-    print(f"  BIC: {metrics['BIC']:.2f}")
-    print(f"  Исторический MAE: {metrics['MAE_historical']:.2f}")
-    print(f"  Порядок (p,d,q): {metrics['order']}")
-    print(f"  Сезонный порядок (P,D,Q,m): {metrics['seasonal_order']}")
-    print(f"  Точек данных: {metrics['data_points']}")
-
-    print(f"\nПрогноз на {len(result['forecast_mean'])} дней:")
-    for date, val in result['forecast_mean'].items():
-        conf = result['forecast_conf_int'].loc[date]
-        print(f"  {date.strftime('%Y-%m-%d')}: {val:.0f} вакансий ({conf.iloc[0]:.0f} - {conf.iloc[1]:.0f})")
-
-    analyzer.save()
-    print(f"\nМодель сохранена: models/arima_model.joblib")
-    print(f"Метрики сохранены: models/arima_metrics.json")
-
-    return analyzer
+    return df
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    parser = argparse.ArgumentParser(description='Обучение ML-моделей DataTrack')
-    parser.add_argument('--data', type=str, default=None, help='Путь к CSV файлу')
-    parser.add_argument('--algorithm', type=str, default='random_forest',
-                        choices=['random_forest', 'gradient_boosting', 'catboost'],
-                        help='Алгоритм для модели зарплаты')
-    parser.add_argument('--tune', action='store_true', help='Подбор гиперпараметров')
-    parser.add_argument('--skip-salary', action='store_true', help='Пропустить обучение модели зарплаты')
-    parser.add_argument('--skip-arima', action='store_true', help='Пропустить ARIMA')
+    """Основная функция обучения моделей."""
+    parser = argparse.ArgumentParser(
+        description='Обучение ML-моделей предсказания зарплаты'
+    )
+    parser.add_argument(
+        '--compare',
+        action='store_true',
+        help='Режим сравнения всех моделей'
+    )
+    parser.add_argument(
+        '--skip-arima',
+        action='store_true',
+        help='Пропустить ARIMA (не используется в текущей версии)'
+    )
     args = parser.parse_args()
 
-    # Определяем путь к данным
-    if args.data:
-        data_path = args.data
-    else:
-        processed_dir = os.path.join(project_root, "finaldata")
-        if not os.path.exists(processed_dir):
-            print(f"Папка {processed_dir} не найдена!")
-            sys.exit(1)
-        csv_files = [f for f in os.listdir(processed_dir) if f.endswith('.csv')]
-        if not csv_files:
-            print("CSV файлы не найдены в finaldata/")
-            sys.exit(1)
-        latest = max(csv_files, key=lambda x: os.path.getmtime(os.path.join(processed_dir, x)))
-        data_path = os.path.join(processed_dir, latest)
+    try:
+        # ====== 1. Загрузка данных ======
+        logger.info("=" * 60)
+        logger.info("ЗАГРУЗКА ДАННЫХ")
+        logger.info("=" * 60)
 
-    print(f"Данные: {data_path}")
-    df = pd.read_csv(data_path, encoding='utf-8')
-    print(f"Загружено {len(df)} записей")
+        data_path = find_data_file()
+        df = load_data(data_path)
 
-    # Обучение моделей
-    if not args.skip_salary:
-        train_salary_model(df, algorithm=args.algorithm, tune=args.tune)
+        # ====== 2. Генерация признаков ======
+        logger.info("=" * 60)
+        logger.info("ГЕНЕРАЦИЯ ПРИЗНАКОВ")
+        logger.info("=" * 60)
 
-    if not args.skip_arima:
-        train_arima_model(df)
+        fe = FeatureEngineer(top_n_skills=20, tfidf_max_features=20)
+        features, top_skill_cols = fe.fit_transform(df)
 
-    print(f"\nМодели сохранены в папке: {os.path.join(project_root, 'models')}")
-    print("Для запуска приложения: streamlit run app/main.py")
+        logger.info(f"Всего признаков: {len(features.columns)}")
+        if top_skill_cols:
+            logger.info(
+                f"Бинарных фичей навыков: {len(top_skill_cols)} -> "
+                f"{top_skill_cols[:5]}..."
+            )
+
+        # ====== 3. Целевая переменная ======
+        y = df['salary_avg']
+
+        logger.info(
+            f"Целевая переменная (salary_avg): "
+            f"min={y.min():.0f}, max={y.max():.0f}, "
+            f"mean={y.mean():.0f}, median={y.median():.0f}"
+        )
+
+        # ====== 4. Обучение моделей ======
+        logger.info("=" * 60)
+        if args.compare:
+            logger.info("РЕЖИМ СРАВНЕНИЯ МОДЕЛЕЙ")
+        else:
+            logger.info("РЕЖИМ ОБУЧЕНИЯ ЛУЧШЕЙ МОДЕЛИ")
+        logger.info("=" * 60)
+
+        predictor = SalaryPredictor()
+        predictor.feature_engineer = fe
+
+        if args.compare:
+            metrics = predictor.compare(
+                features, y, top_skill_cols=top_skill_cols
+            )
+
+            # ====== 5. Итоговая таблица ======
+            logger.info("=" * 60)
+            logger.info("ИТОГИ СРАВНЕНИЯ")
+            logger.info("=" * 60)
+            header = f"{'Модель':<15} {'R²':>8} {'MAE':>8} {'MAE%':>8} {'RMSE':>8}"
+            logger.info(header)
+            logger.info("-" * len(header))
+            for name, m in metrics.items():
+                logger.info(
+                    f"{name:<15} {m['R2']:>8.4f} {m['MAE']:>8.0f} "
+                    f"{m['MAE%']:>7.1f}% {m['RMSE']:>8.0f}"
+                )
+        else:
+            metrics = predictor.train(
+                features, y, top_skill_cols=top_skill_cols
+            )
+
+        # ====== 6. Сохранение модели ======
+        model_path = PROJECT_ROOT / 'models' / 'salary_predictor.pkl'
+        predictor.save(str(model_path))
+
+        logger.info("=" * 60)
+        logger.info(f"Лучшая модель: {predictor.best_model_name}")
+        logger.info(f"Модель сохранена: {model_path}")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

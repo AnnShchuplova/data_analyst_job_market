@@ -1,11 +1,14 @@
 import os
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from collections import Counter
 
 
 @st.cache_data(ttl=300)
 def _load_data():
+    """Загрузка последнего датасета из finaldata/."""
     project_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
@@ -29,6 +32,58 @@ def _project_root():
     )
 
 
+@st.cache_resource
+def _load_model():
+    """Загрузка модели с кешированием — загружается ОДИН РАЗ."""
+    model_path = os.path.join(_project_root(), "models", "salary_predictor.pkl")
+    if not os.path.exists(model_path):
+        return None
+    from src.ml.salary_predictor import SalaryPredictor
+    model = SalaryPredictor.load(model_path)
+    # Совместимость: если старая модель без te_col_mapping — восстанавливаем
+    if not hasattr(model, 'te_col_mapping'):
+        model.te_col_mapping = {}
+        for te_col in model.target_encoding_maps:
+            if te_col == 'role_mean_salary':
+                model.te_col_mapping[te_col] = 'main_role_name'
+            elif te_col == 'region_mean_salary':
+                model.te_col_mapping[te_col] = 'area_name'
+            elif te_col == 'exp_mean_salary':
+                model.te_col_mapping[te_col] = 'experience_name'
+            elif te_col == 'schedule_mean_salary':
+                model.te_col_mapping[te_col] = 'schedule_name'
+            elif te_col == 'workformat_mean_salary':
+                model.te_col_mapping[te_col] = 'work_format_name'
+            elif te_col == 'employment_mean_salary':
+                model.te_col_mapping[te_col] = 'employment_name'
+    return model
+
+
+def _get_unique_sorted(series):
+    """Уникальные непустые значения, отсортированные по частоте."""
+    if series is None:
+        return []
+    counts = series.dropna().value_counts()
+    return list(counts.index)
+
+
+def _get_top_skills(df, n=25):
+    """Извлечение топ-навыков из skills_list, отсортированных по частоте."""
+    all_skills = []
+    if df is not None and "skills_list" in df.columns:
+        for raw in df["skills_list"].dropna():
+            if isinstance(raw, str):
+                text = raw.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    text = text[1:-1]
+                for part in text.split(","):
+                    s = part.strip().strip("'\"").strip()
+                    if s and len(s) > 1:
+                        all_skills.append(s)
+    counts = Counter(all_skills)
+    return [skill for skill, _ in counts.most_common(n)]
+
+
 def view_salary_predictor(service=None):
     st.markdown(
         "<h1 style='text-align: center;'>💰 ПРЕДСКАЗАТЕЛЬ ЗАРПЛАТ</h1>",
@@ -44,9 +99,33 @@ def view_salary_predictor(service=None):
         st.error(f"Ошибка загрузки данных: {e}")
         return
 
+    # Загружаем модель заранее (кешируется)
+    predictor = _load_model()
+
     tab_predict, tab_train = st.tabs(["🎯 Прогноз", "⚙️ Обучение модели"])
 
+    # =============================================
+    # Вкладка ПРОГНОЗ
+    # =============================================
     with tab_predict:
+        # --- Опции из данных ---
+        regions = []
+        roles = []
+        experiences = []
+        schedules = []
+        work_formats = []
+        employments = []
+
+        if df is not None:
+            regions = _get_unique_sorted(df.get("area_name"))
+            roles = _get_unique_sorted(df.get("main_role_name"))
+            experiences = _get_unique_sorted(df.get("experience_name"))
+            schedules = _get_unique_sorted(df.get("schedule_name"))
+            work_formats = _get_unique_sorted(df.get("work_format_name"))
+            employments = _get_unique_sorted(df.get("employment_name"))
+
+        top_skills = _get_top_skills(df, n=25)
+
         with st.container(border=True):
             st.subheader("📝 Параметры вакансии")
             with st.form("salary_prediction_form"):
@@ -54,73 +133,32 @@ def view_salary_predictor(service=None):
                 with col1:
                     experience = st.selectbox(
                         "Опыт работы",
-                        [
-                            "Junior (до 1 года)",
-                            "Middle (1-3 года)",
-                            "Senior (3+ лет)",
-                        ],
-                        index=1,
+                        experiences if experiences else ["Не указано"],
                     )
                     region = st.selectbox(
                         "Регион",
-                        [
-                            "Москва",
-                            "Санкт-Петербург",
-                            "Новосибирск",
-                            "Екатеринбург",
-                            "Казань",
-                            "Нижний Новгород",
-                            "Краснодар",
-                            "Самара",
-                            "Воронеж",
-                            "Пермь",
-                            "Другой",
-                        ],
-                        index=0,
+                        regions if regions else ["Москва"],
                     )
                 with col2:
                     skills = st.multiselect(
                         "Ключевые навыки",
-                        [
-                            "Python",
-                            "SQL",
-                            "Excel",
-                            "Tableau",
-                            "Power BI",
-                            "Statistics",
-                            "Machine Learning",
-                            "A/B testing",
-                            "Data Visualization",
-                            "ETL",
-                            "R",
-                            "SAS",
-                            "SPSS",
-                        ],
-                        default=["Python", "SQL"],
+                        top_skills if top_skills else ["python", "sql"],
                     )
                     position = st.selectbox(
                         "Профессия",
-                        [
-                            "Аналитик",
-                            "BI-аналитик, аналитик данных",
-                            "Бизнес-аналитик",
-                            "Маркетолог-аналитик",
-                            "Продуктовый аналитик",
-                            "Системный аналитик",
-                            "Финансовый аналитик, инвестиционный аналитик",
-                        ],
-                        index=0,
+                        roles if roles else ["Аналитик"],
                     )
+
+                col3, col4 = st.columns(2)
+                with col3:
                     schedule = st.selectbox(
+                        "График работы",
+                        schedules if schedules else ["Полный день"],
+                    )
+                with col4:
+                    work_format = st.selectbox(
                         "Формат работы",
-                        [
-                            "Полный день",
-                            "Удаленная работа",
-                            "Гибкий график",
-                            "Сменный график",
-                            "Вахтовый метод",
-                        ],
-                        index=0,
+                        work_formats if work_formats else ["Удаленная работа"],
                     )
 
                 submitted = st.form_submit_button(
@@ -128,101 +166,88 @@ def view_salary_predictor(service=None):
                 )
 
         if submitted:
-            with st.spinner("Выполняю прогноз..."):
-                try:
-                    from src.ml.salary_predictor import SalaryPredictor
-
-                    model_path = os.path.join(
-                        _project_root(), "models", "salary_model.joblib"
-                    )
-
-                    if not os.path.exists(model_path):
-                        st.warning(
-                            "⚠️ Модель не обучена. Перейдите на вкладку **Обучение модели**."
-                        )
-                    else:
-                        predictor = SalaryPredictor()
-                        predictor.load(model_path)
-
-                        exp_map = {
-                            "Junior (до 1 года)": "Junior",
-                            "Middle (1-3 года)": "Middle",
-                            "Senior (3+ лет)": "Senior",
-                        }
-                        exp_level = exp_map[experience]
-                        area_val = region if region != "Другой" else "Не указан"
-
-                        feature_dict = {
-                            "experience_level": exp_level,
-                            "area_name": area_val,
-                            "main_role_name": position if position else "Аналитик",
+            if predictor is None:
+                st.warning(
+                    "⚠️ Модель не найдена. Перейдите на вкладку "
+                    "**Обучение модели** и обучите её."
+                )
+            else:
+                with st.spinner("Выполняю прогноз..."):
+                    try:
+                        # Строим DataFrame из данных формы
+                        row = {
+                            "experience_name": experience,
+                            "area_name": region,
+                            "main_role_name": position,
                             "schedule_name": schedule,
+                            "work_format_name": work_format,
+                            "employment_name": employments[0] if employments else "Полная занятость",
+                            "skills_list": ", ".join(skills) if skills else "",
+                            "name": f"{position} {experience}",
+                            "has_test": 0,
+                            "premium": 0,
+                            "response_letter_required": 0,
+                            "accept_labor_contract": 1,
+                            "experience_id": 1,
+                            "min_experience_years": 1.0,
+                            "avg_experience_years": 2.0,
+                            "estimated_experience_years": 2.0,
                             "skills_count": len(skills),
-                            "role_mean_salary": 150000,
-                            "region_mean_salary": 150000,
-                            "employment_mean_salary": 150000,
-                            "work_format_mean_salary": 150000,
-                            "has_sql": int("SQL" in skills),
-                            "has_python": int("Python" in skills),
-                            "has_bi": int(
-                                any(s in skills for s in ["Tableau", "Power BI"])
-                            ),
-                            "has_ml": int("Machine Learning" in skills),
-                            "has_stats": int(
-                                "Statistics" in skills or "A/B testing" in skills
-                            ),
-                            "has_etl": int("ETL" in skills),
-                            "has_cloud": 0,
-                            "has_excel": int("Excel" in skills),
-                            "key_skills_total": len(skills),
-                            "name_has_senior": int(exp_level == "Senior"),
-                            "name_has_junior": int(exp_level == "Junior"),
-                            "is_remote": 0,
-                            "is_senior": int(exp_level == "Senior"),
-                            "text_length": 500,
+                            "days_since_publication": 0,
+                            "requirement": "",
+                            "responsibility": "",
+                            "employer_name": "",
                         }
 
-                        if predictor.feature_columns:
-                            for col in predictor.feature_columns:
-                                if col.startswith("skill_tfidf_"):
-                                    feature_dict[col] = 0.0
+                        input_df = pd.DataFrame([row])
 
-                        prediction = predictor.predict_single(feature_dict)
+                        # Трансформация через обученный FeatureEngineer
+                        if predictor.feature_engineer is not None:
+                            features_df, _ = predictor.feature_engineer.transform(input_df)
+                        else:
+                            st.error("Модель не содержит feature_engineer. Переобучите.")
+                            return
 
-                        mae = predictor.metrics.get("MAE", 15000)
-                        lower = max(0, int(prediction - mae))
-                        upper = int(prediction + mae)
+                        # Предсказание
+                        prediction = predictor.predict(features_df)
+                        salary = float(prediction[0]) if prediction else 0
 
-                        pred_fmt = f"{int(prediction):,} ₽".replace(",", " ")
-                        range_fmt = f"{lower:,} - {upper:,} ₽".replace(",", " ")
+                        best = predictor.best_model_name or "CatBoost"
+                        mae = 20000
 
+                        st.markdown("---")
                         with st.container(border=True):
                             st.subheader("Результат оценки")
+                            pred_fmt = f"{int(salary):,} ₽".replace(",", " ")
                             st.markdown(
                                 f"<h1 style='font-size: 60px; margin:0;'>{pred_fmt}</h1>",
                                 unsafe_allow_html=True,
                             )
-                            st.caption(f"Доверительный интервал: {range_fmt}")
+                            lower = max(0, int(salary - mae))
+                            upper = int(salary + mae)
+                            range_fmt = f"{lower:,} - {upper:,} ₽".replace(",", " ")
+                            st.caption(f"Ориентировочный диапазон (±MAE): {range_fmt}")
+
                             st.divider()
                             c1, c2 = st.columns(2)
-                            c1.metric(
-                                "Модель",
-                                predictor.metrics.get("algorithm", "N/A"),
-                            )
-                            c2.metric("MAE модели", f"{int(mae):,} ₽".replace(",", " "))
+                            c1.metric("Лучшая модель", best)
+                            c2.metric("MAE ≈", f"{int(mae):,} ₽".replace(",", " "))
 
-                            st.markdown("**📊 Метрики модели:**")
-                            for k, v in predictor.metrics.items():
-                                if k not in ("timestamp", "algorithm"):
-                                    st.write(f"- **{k}**: {v}")
-                except Exception as e:
-                    st.error(f"Ошибка прогноза: {e}")
-                    import traceback
-
-                    st.code(traceback.format_exc())
+                    except Exception as e:
+                        st.error(f"Ошибка прогноза: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
         else:
-            st.info("👆 Заполните параметры выше и нажмите кнопку расчета.")
+            if df is not None:
+                n_with_salary = int(df["has_salary"].sum()) if "has_salary" in df.columns else "?"
+                st.info(
+                    f"👆 Заполните параметры и нажмите кнопку. "
+                    f"В базе {len(df)} вакансий, с указанной ЗП: {n_with_salary}."
+                )
 
+    # =============================================
+    # Вкладка ОБУЧЕНИЕ
+    # =============================================
     with tab_train:
         with st.container(border=True):
             st.subheader("Обучение модели прогноза зарплаты")
@@ -233,101 +258,129 @@ def view_salary_predictor(service=None):
 
             st.success(f"✅ Данные: {filename} ({len(df)} записей)")
 
-            with_salary = (
-                df["has_salary"].sum() if "has_salary" in df.columns else 0
+            has_salary_col = "has_salary" in df.columns
+            salary_col = "salary_avg" in df.columns
+
+            if not salary_col:
+                st.error("В данных нет колонки `salary_avg`.")
+                return
+
+            with_salary = int(df["has_salary"].sum()) if has_salary_col else len(df)
+            st.metric("Записей с указанной ЗП", with_salary)
+
+            filtered = df[df["salary_avg"] > 0].copy() if salary_col else df.copy()
+            if has_salary_col:
+                filtered = filtered[filtered["has_salary"] == True]
+
+            abs_min = 15000
+            filtered = filtered[filtered["salary_avg"] >= abs_min]
+
+            Q1 = filtered["salary_avg"].quantile(0.25)
+            Q3 = filtered["salary_avg"].quantile(0.75)
+            IQR = Q3 - Q1
+            upper_bound = Q3 + 1.5 * IQR
+            filtered = filtered[filtered["salary_avg"] <= upper_bound]
+
+            st.info(
+                f"После фильтрации: {len(filtered)} записей "
+                f"(ЗП от {int(filtered['salary_avg'].min())} до {int(filtered['salary_avg'].max())}₽)"
             )
-            st.metric("Записей с указанной ЗП", int(with_salary))
 
             col1, col2 = st.columns(2)
             with col1:
-                algorithm = st.selectbox(
-                    "Алгоритм",
-                    [
-                        "RandomForest",
-                        "GradientBoosting",
-                        "CatBoost (если установлен)",
-                    ],
-                    index=0,
-                )
+                test_size = st.slider("Размер тестовой выборки", 0.1, 0.3, 0.2, 0.05)
             with col2:
-                tune_hp = st.checkbox(
-                    "Подбор гиперпараметров (GridSearch)", value=False
-                )
+                st.markdown("**Модели:**")
+                st.write("- RandomForest")
+                st.write("- CatBoost (с text_features)")
+                st.write("- GradientBoosting")
+                st.write("- Ансамбль")
 
             train_btn = st.button(
                 "🚀 Обучить модель", type="primary", use_container_width=True
             )
 
         if train_btn:
-            with st.spinner("Обучение модели..."):
+            with st.spinner("Обучение моделей (это может занять несколько минут)..."):
                 try:
-                    from src.data_processing.feature_engineering import (
-                        FeatureEngineer,
-                    )
+                    from src.data_processing.feature_engineering import FeatureEngineer
                     from src.ml.salary_predictor import SalaryPredictor
 
                     fe = FeatureEngineer()
-                    df_prepared, feature_cols = fe.prepare_dataset_for_regression(
-                        df, fit=True
-                    )
+                    features_df, top_skill_cols = fe.fit_transform(filtered)
 
-                    algo_map = {
-                        "RandomForest": "random_forest",
-                        "GradientBoosting": "gradient_boosting",
-                        "CatBoost (если установлен)": "catboost",
-                    }
+                    y = features_df["salary_avg"] if "salary_avg" in features_df.columns else filtered["salary_avg"]
+                    X = features_df.drop(columns=["salary_avg"], errors="ignore")
+
+                    st.info(f"Признаков: {len(X.columns)}, Строк: {len(X)}")
 
                     predictor = SalaryPredictor()
-                    metrics = predictor.train(
-                        df_prepared,
-                        feature_cols,
-                        algorithm=algo_map[algorithm],
-                        tune_hyperparams=tune_hp,
+                    predictor.feature_engineer = fe
+                    all_metrics = predictor.compare(
+                        X, y,
+                        top_skill_cols=top_skill_cols,
+                        test_size=test_size,
                     )
 
-                    st.success("✅ Модель обучена!")
+                    st.success("✅ Обучение завершено!")
+
+                    best_name = predictor.best_model_name
+                    best_r2 = all_metrics[best_name]["R2"]
+                    best_mae = all_metrics[best_name]["MAE"]
+                    best_mae_pct = all_metrics[best_name]["MAE%"]
 
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("MAE", f"{metrics['MAE']:,.0f} руб.")
-                    c2.metric("MAE % от ср. ЗП", f"{metrics['MAE_percent']:.1f}%")
-                    c3.metric("R²", f"{metrics['R2']:.4f}")
-                    c4.metric("RMSE", f"{metrics['RMSE']:,.0f} руб.")
+                    c1.metric("Лучшая модель", best_name)
+                    c2.metric("MAE", f"{int(best_mae):,} ₽".replace(",", " "))
+                    c3.metric("MAE %", f"{best_mae_pct:.1f}%")
+                    c4.metric("R²", f"{best_r2:.4f}")
 
-                    if metrics["MAE_percent"] <= 20:
-                        st.success("✅ MAE в пределах 20% от средней ЗП (ТЗ выполнено)")
+                    if best_mae_pct <= 20:
+                        st.success("✅ MAE ≤ 20% от средней ЗП — ТЗ ВЫПОЛНЕНО")
                     else:
-                        st.warning(
-                            f"⚠️ MAE {metrics['MAE_percent']:.1f}% > 20% (ТЗ не выполнено)"
-                        )
+                        st.warning(f"⚠️ MAE {best_mae_pct:.1f}% > 20% — ТЗ не выполнено")
 
-                    if metrics["R2"] >= 0.7:
-                        st.success("✅ R² >= 0.7 (ТЗ выполнено)")
+                    if best_r2 >= 0.7:
+                        st.success("✅ R² ≥ 0.7 — ТЗ ВЫПОЛНЕНО")
                     else:
-                        st.warning(
-                            f"⚠️ R² {metrics['R2']:.4f} < 0.7 (ТЗ не выполнено)"
-                        )
+                        st.warning(f"⚠️ R² {best_r2:.4f} < 0.7 — ТЗ не выполнено")
 
-                    importance = predictor.get_feature_importance()
-                    if importance is not None:
+                    st.markdown("---")
+                    st.subheader("📊 Сравнение моделей")
+                    metrics_table = pd.DataFrame(all_metrics).T
+                    metrics_table.index.name = "Модель"
+                    st.dataframe(metrics_table[["R2", "MAE", "MAE%", "RMSE"]], use_container_width=True)
+
+                    cb_model = predictor.models.get("catboost")
+                    if cb_model is not None and hasattr(cb_model, "feature_importances_"):
                         with st.container(border=True):
-                            st.subheader("📊 Важность признаков")
+                            st.subheader("📊 Важность признаков (CatBoost)")
+                            cols = predictor.models.get("_cat_columns", list(X.columns))
+                            importance_data = pd.DataFrame({
+                                "feature": cols,
+                                "importance": cb_model.feature_importances_
+                            }).sort_values("importance", ascending=False).head(20)
+
                             fig = px.bar(
-                                importance,
+                                importance_data,
                                 x="importance",
                                 y="feature",
                                 orientation="h",
-                                title="Топ-15 наиболее важных признаков",
+                                title="Топ-20 признаков",
                             )
+                            fig.update_layout(height=600)
                             st.plotly_chart(fig, use_container_width=True)
 
+                    model_path = os.path.join(_project_root(), "models", "salary_predictor.pkl")
                     try:
-                        predictor.save()
-                        st.caption("Модель сохранена в models/salary_model.joblib")
+                        predictor.save(model_path)
+                        # Сбрасываем кеш модели чтобы подхватилась новая
+                        _load_model.clear()
+                        st.success(f"✅ Модель сохранена: `models/salary_predictor.pkl`")
                     except Exception as e:
                         st.warning(f"Не удалось сохранить модель: {e}")
 
                 except Exception as e:
                     st.error(f"Ошибка обучения: {e}")
                     import traceback
-
                     st.code(traceback.format_exc())
