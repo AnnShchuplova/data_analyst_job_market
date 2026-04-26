@@ -45,6 +45,12 @@ class SalaryPredictor:
         self.te_col_mapping = {}
         self.te_fallback = None
 
+        # Метрики лучшей модели и веса ансамбля — для predict()
+        self.best_mae = None
+        self.best_mae_pct = None
+        self.best_r2 = None
+        self.ensemble_weights = {}
+
     # -------------------------------------------------------
     # Целевое кодирование — БЕЗ утечки, со сглаживанием
     # -------------------------------------------------------
@@ -330,12 +336,24 @@ class SalaryPredictor:
         ens_metrics = self._evaluate(y_test, ensemble_pred, 'Ансамбль')
         all_metrics['Ансамбль'] = ens_metrics
 
+        # Сохраняем веса ансамбля для predict()
+        self.ensemble_weights = {
+            'RandomForest': rf_w / total,
+            'CatBoost': cb_w / total,
+            'GradientBoosting': gb_w / total,
+        }
+
         # =============================================
         # Итоги
         # =============================================
         best_name = max(all_metrics, key=lambda k: all_metrics[k]['R2'])
         self.best_model_name = best_name
         best_r2 = all_metrics[best_name]['R2']
+
+        # Сохраняем метрики лучшей модели
+        self.best_r2 = best_r2
+        self.best_mae = all_metrics[best_name]['MAE']
+        self.best_mae_pct = all_metrics[best_name]['MAE%']
 
         logger.info("=" * 60)
         logger.info(f"ЛУЧШАЯ МОДЕЛЬ: {best_name} (R²={best_r2:.4f})")
@@ -404,12 +422,18 @@ class SalaryPredictor:
         # GradientBoosting — те же признаки
         gb_pred = self.models['gradient_boosting'].predict(X_rf)
 
+        # Возвращаем предсказание лучшей модели
         if self.best_model_name == 'CatBoost':
             return cb_pred
         elif self.best_model_name == 'GradientBoosting':
             return gb_pred
         elif self.best_model_name == 'Ансамбль':
-            return (cb_pred + rf_pred + gb_pred) / 3
+            w = self.ensemble_weights
+            return (
+                w.get('RandomForest', 0.33) * rf_pred +
+                w.get('CatBoost', 0.33) * cb_pred +
+                w.get('GradientBoosting', 0.33) * gb_pred
+            )
         else:
             return rf_pred
 
@@ -426,5 +450,29 @@ class SalaryPredictor:
     def load(cls, path):
         with open(path, 'rb') as f:
             model = pickle.load(f)
+        # Совместимость: старые модели без новых полей
+        if not hasattr(model, 'te_col_mapping'):
+            model.te_col_mapping = {}
+            for te_col in model.target_encoding_maps:
+                if te_col == 'role_mean_salary':
+                    model.te_col_mapping[te_col] = 'main_role_name'
+                elif te_col == 'region_mean_salary':
+                    model.te_col_mapping[te_col] = 'area_name'
+                elif te_col == 'exp_mean_salary':
+                    model.te_col_mapping[te_col] = 'experience_name'
+                elif te_col == 'schedule_mean_salary':
+                    model.te_col_mapping[te_col] = 'schedule_name'
+                elif te_col == 'workformat_mean_salary':
+                    model.te_col_mapping[te_col] = 'work_format_name'
+                elif te_col == 'employment_mean_salary':
+                    model.te_col_mapping[te_col] = 'employment_name'
+        if not hasattr(model, 'best_mae'):
+            model.best_mae = None
+        if not hasattr(model, 'best_mae_pct'):
+            model.best_mae_pct = None
+        if not hasattr(model, 'best_r2'):
+            model.best_r2 = None
+        if not hasattr(model, 'ensemble_weights'):
+            model.ensemble_weights = {}
         logger.info(f"Модель загружена: {path}")
         return model
