@@ -1,9 +1,10 @@
 import os
-import numpy as np
+import traceback
+from collections import Counter
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from collections import Counter
 
 
 @st.cache_data(ttl=300)
@@ -39,24 +40,7 @@ def _load_model():
     if not os.path.exists(model_path):
         return None
     from src.ml.salary_predictor import SalaryPredictor
-    model = SalaryPredictor.load(model_path)
-    # Совместимость: если старая модель без te_col_mapping — восстанавливаем
-    if not hasattr(model, 'te_col_mapping'):
-        model.te_col_mapping = {}
-        for te_col in model.target_encoding_maps:
-            if te_col == 'role_mean_salary':
-                model.te_col_mapping[te_col] = 'main_role_name'
-            elif te_col == 'region_mean_salary':
-                model.te_col_mapping[te_col] = 'area_name'
-            elif te_col == 'exp_mean_salary':
-                model.te_col_mapping[te_col] = 'experience_name'
-            elif te_col == 'schedule_mean_salary':
-                model.te_col_mapping[te_col] = 'schedule_name'
-            elif te_col == 'workformat_mean_salary':
-                model.te_col_mapping[te_col] = 'work_format_name'
-            elif te_col == 'employment_mean_salary':
-                model.te_col_mapping[te_col] = 'employment_name'
-    return model
+    return SalaryPredictor.load(model_path)
 
 
 def _get_unique_sorted(series):
@@ -139,6 +123,10 @@ def view_salary_predictor(service=None):
                         "Регион",
                         regions if regions else ["Москва"],
                     )
+                    employment = st.selectbox(
+                        "Тип занятости",
+                        employments if employments else ["Полная занятость"],
+                    )
                 with col2:
                     skills = st.multiselect(
                         "Ключевые навыки",
@@ -174,14 +162,13 @@ def view_salary_predictor(service=None):
             else:
                 with st.spinner("Выполняю прогноз..."):
                     try:
-                        # Строим DataFrame из данных формы
                         row = {
                             "experience_name": experience,
                             "area_name": region,
                             "main_role_name": position,
                             "schedule_name": schedule,
                             "work_format_name": work_format,
-                            "employment_name": employments[0] if employments else "Полная занятость",
+                            "employment_name": employment,
                             "skills_list": ", ".join(skills) if skills else "",
                             "name": f"{position} {experience}",
                             "has_test": 0,
@@ -201,19 +188,17 @@ def view_salary_predictor(service=None):
 
                         input_df = pd.DataFrame([row])
 
-                        # Трансформация через обученный FeatureEngineer
                         if predictor.feature_engineer is not None:
                             features_df, _ = predictor.feature_engineer.transform(input_df)
                         else:
                             st.error("Модель не содержит feature_engineer. Переобучите.")
                             return
 
-                        # Предсказание
                         prediction = predictor.predict(features_df)
                         salary = float(prediction[0]) if prediction else 0
 
                         best = predictor.best_model_name or "CatBoost"
-                        mae = 20000
+                        mae = predictor.best_mae if predictor.best_mae else 20000
 
                         st.markdown("---")
                         with st.container(border=True):
@@ -226,16 +211,17 @@ def view_salary_predictor(service=None):
                             lower = max(0, int(salary - mae))
                             upper = int(salary + mae)
                             range_fmt = f"{lower:,} - {upper:,} ₽".replace(",", " ")
-                            st.caption(f"Ориентировочный диапазон (±MAE): {range_fmt}")
+                            st.caption(f"Доверительный интервал (±MAE): {range_fmt}")
 
                             st.divider()
-                            c1, c2 = st.columns(2)
+                            c1, c2, c3 = st.columns(3)
                             c1.metric("Лучшая модель", best)
-                            c2.metric("MAE ≈", f"{int(mae):,} ₽".replace(",", " "))
+                            c2.metric("MAE", f"{int(mae):,} ₽".replace(",", " "))
+                            if predictor.best_r2 is not None:
+                                c3.metric("R²", f"{predictor.best_r2:.4f}")
 
                     except Exception as e:
                         st.error(f"Ошибка прогноза: {e}")
-                        import traceback
                         st.code(traceback.format_exc())
         else:
             if df is not None:
@@ -294,7 +280,7 @@ def view_salary_predictor(service=None):
                 st.write("- RandomForest")
                 st.write("- CatBoost (с text_features)")
                 st.write("- GradientBoosting")
-                st.write("- Ансамбль")
+                st.write("- Ансамбль (R²-взвешенный)")
 
             train_btn = st.button(
                 "🚀 Обучить модель", type="primary", use_container_width=True
@@ -309,7 +295,7 @@ def view_salary_predictor(service=None):
                     fe = FeatureEngineer()
                     features_df, top_skill_cols = fe.fit_transform(filtered)
 
-                    y = features_df["salary_avg"] if "salary_avg" in features_df.columns else filtered["salary_avg"]
+                    y = filtered["salary_avg"]
                     X = features_df.drop(columns=["salary_avg"], errors="ignore")
 
                     st.info(f"Признаков: {len(X.columns)}, Строк: {len(X)}")
@@ -374,7 +360,6 @@ def view_salary_predictor(service=None):
                     model_path = os.path.join(_project_root(), "models", "salary_predictor.pkl")
                     try:
                         predictor.save(model_path)
-                        # Сбрасываем кеш модели чтобы подхватилась новая
                         _load_model.clear()
                         st.success(f"✅ Модель сохранена: `models/salary_predictor.pkl`")
                     except Exception as e:
@@ -382,5 +367,4 @@ def view_salary_predictor(service=None):
 
                 except Exception as e:
                     st.error(f"Ошибка обучения: {e}")
-                    import traceback
                     st.code(traceback.format_exc())
