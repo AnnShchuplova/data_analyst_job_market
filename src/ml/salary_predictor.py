@@ -51,9 +51,6 @@ class SalaryPredictor:
         self.best_r2 = None
         self.ensemble_weights = {}
 
-    # -------------------------------------------------------
-    # Целевое кодирование — БЕЗ утечки, со сглаживанием
-    # -------------------------------------------------------
     def _add_target_encoding(self, X_train, X_test, y_train):
         combined = X_train.copy()
         combined['_target'] = y_train
@@ -106,9 +103,7 @@ class SalaryPredictor:
 
         return X_train, X_test
 
-    # -------------------------------------------------------
-    # Подготовка признаков для RandomForest / GradientBoosting
-    # -------------------------------------------------------
+  
     def _prepare_rf_features(self, X):
         rf = X.copy()
         for col in self.cat_columns:
@@ -120,9 +115,6 @@ class SalaryPredictor:
         rf = rf.fillna(0)
         return rf
 
-    # -------------------------------------------------------
-    # Индексы категориальных и текстовых признаков для CatBoost
-    # -------------------------------------------------------
     def _get_cat_feature_indices(self, X):
         indices = []
         for col in self.cat_columns:
@@ -137,9 +129,6 @@ class SalaryPredictor:
                 indices.append(X.columns.get_loc(col))
         return indices
 
-    # -------------------------------------------------------
-    # Метрики
-    # -------------------------------------------------------
     def _evaluate(self, y_true, y_pred, model_name):
         mae = mean_absolute_error(y_true, y_pred)
         rmse = np.sqrt(mean_squared_error(y_true, y_pred))
@@ -160,9 +149,6 @@ class SalaryPredictor:
             'MAPE': mape
         }
 
-    # -------------------------------------------------------
-    # Кросс-валидация
-    # -------------------------------------------------------
     def _cross_validate(self, model, X, y, model_name, cv=5):
         try:
             scores = cross_val_score(
@@ -181,9 +167,6 @@ class SalaryPredictor:
             )
             return None
 
-    # -------------------------------------------------------
-    # Важность признаков
-    # -------------------------------------------------------
     def _log_feature_importance(self, model, columns, model_name, top_n=15):
         if not hasattr(model, 'feature_importances_'):
             return
@@ -193,9 +176,7 @@ class SalaryPredictor:
         for feat, imp in importances.items():
             logger.info(f"    {feat}: {imp:.4f}")
 
-    # -------------------------------------------------------
-    # ОБУЧЕНИЕ
-    # -------------------------------------------------------
+
     def train(self, X, y, top_skill_cols=None, test_size=0.2, random_state=42):
         logger.info(f"=== Обучение моделей ===")
         logger.info(f"  Данных: {len(X)} строк, {len(X.columns)} признаков")
@@ -216,9 +197,6 @@ class SalaryPredictor:
 
         all_metrics = {}
 
-        # =============================================
-        # 1. RandomForest
-        # =============================================
         logger.info("--- RandomForest ---")
 
         rf = RandomForestRegressor(
@@ -243,9 +221,7 @@ class SalaryPredictor:
         self.models['random_forest'] = rf
         self.models['_rf_columns'] = list(X_train_rf.columns)
 
-        # =============================================
-        # 2. CatBoost (cat_features + text_features)
-        # =============================================
+      
         logger.info("--- CatBoost (с нативными text_features) ---")
 
         cat_indices = self._get_cat_feature_indices(X_train)
@@ -294,9 +270,6 @@ class SalaryPredictor:
         self.models['_cat_indices'] = cat_indices
         self.models['_text_indices'] = text_indices
 
-        # =============================================
-        # 3. GradientBoosting
-        # =============================================
         logger.info("--- GradientBoosting ---")
 
         gb = GradientBoostingRegressor(
@@ -320,9 +293,6 @@ class SalaryPredictor:
         self._log_feature_importance(gb, X_train_rf.columns, 'GradientBoosting')
         self.models['gradient_boosting'] = gb
 
-        # =============================================
-        # 4. Ансамбль (RF + CatBoost + GB)
-        # =============================================
         logger.info("--- Ансамбль (RF + CatBoost + GB) ---")
 
         rf_w = max(rf_metrics['R2'], 0.01)
@@ -336,16 +306,14 @@ class SalaryPredictor:
         ens_metrics = self._evaluate(y_test, ensemble_pred, 'Ансамбль')
         all_metrics['Ансамбль'] = ens_metrics
 
-        # Сохраняем веса ансамбля для predict()
+      
         self.ensemble_weights = {
             'RandomForest': rf_w / total,
             'CatBoost': cb_w / total,
             'GradientBoosting': gb_w / total,
         }
 
-        # =============================================
-        # Итоги
-        # =============================================
+       
         best_name = max(all_metrics, key=lambda k: all_metrics[k]['R2'])
         self.best_model_name = best_name
         best_r2 = all_metrics[best_name]['R2']
@@ -382,9 +350,6 @@ class SalaryPredictor:
     def compare(self, X, y, top_skill_cols=None, test_size=0.2, random_state=42):
         return self.train(X, y, top_skill_cols, test_size, random_state)
 
-    # -------------------------------------------------------
-    # Предсказание на новых данных
-    # -------------------------------------------------------
     def predict(self, X):
         if self.best_model_name is None:
             raise ValueError("Модель не обучена. Сначала вызовите train()")
@@ -410,7 +375,6 @@ class SalaryPredictor:
         )
         cb_pred = self.models['catboost'].predict(pool)
 
-        # RandomForest — только числовые
         rf_cols = self.models.get('_rf_columns', [])
         X_rf = self._prepare_rf_features(X_pred)
         for col in rf_cols:
@@ -419,10 +383,8 @@ class SalaryPredictor:
         X_rf = X_rf[rf_cols]
         rf_pred = self.models['random_forest'].predict(X_rf)
 
-        # GradientBoosting — те же признаки
         gb_pred = self.models['gradient_boosting'].predict(X_rf)
 
-        # Возвращаем предсказание лучшей модели
         if self.best_model_name == 'CatBoost':
             return cb_pred
         elif self.best_model_name == 'GradientBoosting':
@@ -437,9 +399,6 @@ class SalaryPredictor:
         else:
             return rf_pred
 
-    # -------------------------------------------------------
-    # Сохранение / загрузка
-    # -------------------------------------------------------
     def save(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'wb') as f:
