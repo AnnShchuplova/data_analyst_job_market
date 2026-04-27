@@ -40,7 +40,6 @@ def test_full_pipeline(pages=10):
         return False
     
     print()
-   
     print("Фильтрация вакансий")
     
     try:

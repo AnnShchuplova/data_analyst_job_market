@@ -1,10 +1,38 @@
+import hashlib
 import os
 import sys
 import glob
 import pandas as pd
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _find_latest_csv() -> Optional[str]:
+    """Returns path to the latest new_cleaned_vacancies*.csv, or None if not found."""
+    if getattr(sys, 'frozen', False):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    files = glob.glob(os.path.join(base_dir, 'data', 'processed', "new_cleaned_vacancies*.csv"))
+    return max(files, key=os.path.getmtime) if files else None
+
+
+def compute_data_checksum() -> str:
+    """MD5 of the raw bytes of the latest vacancies CSV. Returns '' if no file found."""
+    path = _find_latest_csv()
+    if not path:
+        return ""
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError as exc:
+        logger.error("Cannot read file for checksum: %s", exc)
+        return ""
 
 
 def simplify_job_name(name):
@@ -30,24 +58,13 @@ def simplify_job_name(name):
 
     return 'Other'
 
+
 def load_vacancies_data():
-    if getattr(sys, 'frozen', False):
-        base_dir = sys._MEIPASS
-    else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    latest_file = _find_latest_csv()
 
-    data_dir = os.path.join(base_dir, 'data', 'processed')
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    data_dir = os.path.join(base_dir, 'data', 'processed')
-
-    search_pattern = os.path.join(data_dir, "new_cleaned_vacancies*.csv")
-    files = glob.glob(search_pattern)
-
-    if not files:
-        logger.error(f"Files not found: {search_pattern}")
+    if not latest_file:
+        logger.error("Files not found in data/processed/")
         return pd.DataFrame()
-
-    latest_file = max(files, key=os.path.getmtime)
 
     try:
         df = pd.read_csv(latest_file)
@@ -68,7 +85,6 @@ def load_vacancies_data():
         ]
 
         df_ml = df[useful_cols].copy()
-
         df_ml['name'] = df_ml['name'].apply(simplify_job_name)
 
         return df_ml
@@ -76,6 +92,7 @@ def load_vacancies_data():
     except Exception as e:
         logger.error(f"Error loading file: {e}")
         return pd.DataFrame()
+
 
 if __name__ == "__main__":
     df = load_vacancies_data()

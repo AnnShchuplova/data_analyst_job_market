@@ -1,7 +1,22 @@
 import streamlit as st
 
+from src.infrastructure.vacancies_repository import VacanciesRepository
+from src.services.home_service import HomeService
 
-def view_home(service):
+
+@st.cache_resource
+def _get_service(data_checksum: str) -> HomeService:
+    # Keyed by checksum: when a new CSV appears, the checksum changes and a
+    # fresh service is built on next run. Same pattern as clusters.py.
+    return HomeService(VacanciesRepository())
+
+
+@st.cache_data(ttl=300)
+def _get_checksum() -> str:
+    return VacanciesRepository().compute_checksum()
+
+
+def view_home(service=None):
     st.markdown("<h1 style='text-align: center;'>DataTrack Dashboard</h1>", unsafe_allow_html=True)
     st.markdown("---")
 
@@ -16,7 +31,8 @@ def view_home(service):
         **Возможности системы:**
         1. 📊 **Агрегация вакансий** - сбор и визуализация
         2. 🧩 **Кластеризация** - группировка вакансий
-        3. 💰 **Прогноз зарплат** - ML-оценка стоимости специалиста
+        3. 📈 **Анализ трендов (SARIMA)** - прогноз количества вакансий во времени
+        4. 💰 **Прогноз зарплат** - ML-оценка стоимости специалиста
         """)
 
     with col2:
@@ -28,7 +44,9 @@ def view_home(service):
     st.markdown("---")
     st.subheader("Сводка по базе данных")
 
-    stats = service.get_home_statistics()
+    checksum = _get_checksum()
+    home_service = _get_service(checksum)
+    stats = home_service.get_home_statistics()
 
     m1, m2, m3, m4 = st.columns(4)
 
@@ -44,7 +62,12 @@ def view_home(service):
 
     with m3:
         val = stats.avg_salary
-        display = f"{val // 1000}K ₽" if val > 100000 else f"{val} ₽"
+        if val >= 100000:
+            display = f"{val // 1000}K ₽"
+        elif val > 0:
+            display = f"{val:,} ₽".replace(",", " ")
+        else:
+            display = "—"
         st.metric("Средняя ЗП", display)
 
     with m4:
@@ -55,4 +78,6 @@ def view_home(service):
 
     st.markdown("---")
     if st.button("🔄 Обновить статистику", use_container_width=True):
+        _get_checksum.clear()
+        _get_service.clear()
         st.rerun()
