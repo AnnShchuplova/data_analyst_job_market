@@ -667,15 +667,3 @@ class DataCleaner:
                     percentage = count / len(df) * 100
                     print(f"  {skill}: {count} ({percentage:.1f}%)")
         
-
-
-if __name__ == "__main__":
-    cleaner = DataCleaner()
-    
-    input_file = "data/processed/analyst_vacancies_20260123_153601.json"
-    
-    if not os.path.exists(input_file):
-        print(f"Файл не найден: {input_file}")
-    else:
-        df_cleaned = cleaner.run_full_clean(input_file, remove_outliers=False)
-        print("\nОчистка завершена")
