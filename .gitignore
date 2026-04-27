@@ -15,8 +15,6 @@ __pycache__/
 *.py[cod]
 
 # Data: generated files (never commit)
-data/raw/
-data/processed/
 data/cache/
 
 # Secrets
