@@ -81,11 +81,9 @@ class TimeSeriesAnalyzer:
         
         df[date_column] = pd.to_datetime(df[date_column])
         df = df.dropna(subset=[date_column])
-        
-        # Обрезка по дате (если указана)
+   
         if end_date is not None:
             cutoff = pd.to_datetime(end_date)
-            # Если колонка с таймзоной — убираем таймзону для сравнения
             if df[date_column].dt.tz is not None:
                 df[date_column] = df[date_column].dt.tz_localize(None)
             before = len(df)
