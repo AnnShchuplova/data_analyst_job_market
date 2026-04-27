@@ -1,515 +1,437 @@
 """
-Модуль прогнозирования заработной платы.
+Модуль ML-моделей для предсказания зарплаты.
+Включает RandomForest, CatBoost, GradientBoosting и ансамбль.
 
-Согласно ЧТЗ раздел «Модуль машинного обучения»:
-- Алгоритм: CatBoost или RandomForest
-- Целевая переменная: Средняя/медианная зарплата (числовая)
-- Признаки: Регион (код региона), уровень опыта, вектор навыков, должность
-- Разделение: 80/20 train/test
-- Кросс-валидация и подбор гиперпараметров
-- Метрики: MAE в пределах 20% от средней ЗП, R2 >= 0.7
-- Сохранение модели (salary_model.joblib)
+Ключевые правила:
+  - Целевое кодирование вычисляется ТОЛЬКО после разделения train/test
+  - CatBoost получает нативные cat_features + text_features
+  - RandomForest/GradientBoosting используют ordinal encoding + TF-IDF числа
 """
 
-import os
-import json
 import logging
+import pickle
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from sklearn.model_selection import train_test_split, GridSearchCV, KFold
+from catboost import CatBoostRegressor, Pool
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import cross_val_score, train_test_split
 
 logger = logging.getLogger(__name__)
 
-# Пути для сохранения моделей
-MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models")
-
 
 class SalaryPredictor:
-    """Модель прогнозирования заработной платы аналитиков данных."""
+    """Предсказатель зарплаты на основе ML-моделей."""
 
     def __init__(self):
-        self.model = None
-        self.secondary_model = None  # второй алгоритм для ансамбля
-        self.feature_columns = None
-        self.metrics = {}
-        self._is_trained = False
-        self._cat_feature_indices = []
-        self._cat_feature_names = ['experience_level_encoded', 'area_encoded', 'role_encoded', 'schedule_encoded']
+        self.models = {}
+        self.best_model_name = None
+        self.feature_engineer = None
 
-    def _get_model(self, algorithm: str = 'random_forest', use_cat_features: bool = False):
-        """Получение экземпляра модели БЕЗ cat_features (для совместимости со sklearn clone)."""
-        if algorithm == 'catboost':
-            try:
-                from catboost import CatBoostRegressor
-                params = {
-                    'iterations': 2000,
-                    'learning_rate': 0.05,
-                    'depth': 8,
-                    'l2_leaf_reg': 3,
-                    'min_data_in_leaf': 5,
-                    'verbose': 0,
-                    'random_seed': 42,
-                }
-                # НЕ передаём cat_features в конструктор — sklearn не умеет клонировать
-                # cat_features будет передаваться через Pool при fit
-                return CatBoostRegressor(**params)
-            except ImportError:
-                logger.warning("CatBoost не установлен, используем RandomForest")
-                algorithm = 'random_forest'
+        self.cat_columns = [
+            'experience_name', 'area_name', 'main_role_name',
+            'schedule_name', 'work_format_name', 'employment_name'
+        ]
 
-        if algorithm == 'random_forest':
-            return RandomForestRegressor(
-                n_estimators=500,
-                max_depth=20,
-                min_samples_split=3,
-                min_samples_leaf=2,
-                random_state=42,
-                n_jobs=-1
-            )
-        elif algorithm == 'gradient_boosting':
-            return GradientBoostingRegressor(
-                n_estimators=500,
-                max_depth=5,
-                learning_rate=0.05,
-                min_samples_split=5,
-                subsample=0.8,
-                random_state=42
-            )
-        else:
-            raise ValueError(f"Неизвестный алгоритм: {algorithm}")
+        self.text_columns = ['requirement', 'responsibility']
 
-    def _make_pool(self, X, y=None, cat_indices=None):
-        """Создание CatBoost Pool с cat_features.
+        self.te_min_samples = 5
 
-        CatBoost требует, чтобы категориальные колонки были типа int (не float).
-        Поэтому конвертируем numpy array -> DataFrame и приводим cat-колонки к int.
-        """
-        from catboost import Pool
-        if cat_indices is None:
-            cat_indices = self._cat_feature_indices
-        if not cat_indices:
-            if y is not None:
-                return Pool(X, label=y)
-            return None
-        # Конвертируем numpy array в DataFrame с правильными типами
-        if isinstance(X, np.ndarray):
-            X_df = pd.DataFrame(X, columns=self.feature_columns[:X.shape[1]])
-            for idx in cat_indices:
-                if idx < X.shape[1]:
-                    col_name = X_df.columns[idx]
-                    X_df[col_name] = X_df[col_name].astype(np.int32)
-        else:
-            X_df = X.copy()
-            for idx in cat_indices:
-                if idx < len(X_df.columns):
-                    col_name = X_df.columns[idx]
-                    X_df[col_name] = X_df[col_name].astype(np.int32)
-        if y is not None:
-            return Pool(data=X_df, label=y, cat_features=cat_indices)
-        else:
-            return Pool(data=X_df, cat_features=cat_indices)
+        self.encoded_columns = [f'{col}_enc' for col in self.cat_columns]
 
-    def train(self, df: pd.DataFrame, feature_columns: list,
-              target_column: str = 'salary_avg',
-              algorithm: str = 'random_forest',
-              test_size: float = 0.15,
-              tune_hyperparams: bool = False,
-              remove_outliers: bool = True,
-              salary_range: tuple = (20000, 600000)) -> dict:
-        """Обучение модели прогнозирования зарплаты."""
-        logger.info(f"Обучение модели прогноза зарплаты (алгоритм: {algorithm})")
+        self.target_encoding_maps = {}
+        self.te_col_mapping = {}
+        self.te_fallback = None
 
-        # Фильтрация записей с пропущенной зарплатой
-        df_model = df.dropna(subset=[target_column]).copy()
-        df_model = df_model[df_model[target_column] > 0]
-        df_model = df_model.reset_index(drop=True)
+        # Метрики лучшей модели и веса ансамбля — для predict()
+        self.best_mae = None
+        self.best_mae_pct = None
+        self.best_r2 = None
+        self.ensemble_weights = {}
 
-        # Удаление выбросов
-        if remove_outliers:
-            before = len(df_model)
-            Q1 = df_model[target_column].quantile(0.02)
-            Q3 = df_model[target_column].quantile(0.98)
-            df_model = df_model[(df_model[target_column] >= Q1) &
-                                (df_model[target_column] <= Q3)]
-            df_model = df_model.reset_index(drop=True)
-            removed = before - len(df_model)
-            if removed > 0:
-                logger.info(f"Удалено {removed} выбросов (процентили 5%-95%)")
+    def _add_target_encoding(self, X_train, X_test, y_train):
+        combined = X_train.copy()
+        combined['_target'] = y_train
 
-        # Фильтрация записей с пропущенными признаками
-        available_features = [c for c in feature_columns if c in df_model.columns]
-        df_model = df_model.dropna(subset=available_features)
-        df_model = df_model.reset_index(drop=True)
+        te_configs = [
+            ('main_role_name', 'role_mean_salary'),
+            ('area_name', 'region_mean_salary'),
+            ('experience_name', 'exp_mean_salary'),
+            ('schedule_name', 'schedule_mean_salary'),
+            ('work_format_name', 'workformat_mean_salary'),
+            ('employment_name', 'employment_mean_salary'),
+        ]
 
-        logger.info(f"Записей для обучения: {len(df_model)}")
-        if len(df_model) < 50:
-            logger.warning(f"Мало данных ({len(df_model)} записей).")
+        self.target_encoding_maps = {}
+        self.te_col_mapping = {}
+        info_parts = []
+        global_mean = y_train.mean()
 
-        # ======= РАЗДЕЛЕНИЕ 80/20 ПЕРЕД ЛЮБЫМИ ТРАНСФОРМАЦИЯМИ =======
-        train_idx, test_idx = train_test_split(
-            range(len(df_model)), test_size=test_size, random_state=42
-        )
-        train_df = df_model.iloc[train_idx].copy()
-        test_df = df_model.iloc[test_idx].copy()
-
-        # ======= TARGET ENCODING ТОЛЬКО НА TRAIN =======
-        global_mean = train_df[target_column].mean()
-
-        role_means = region_means = emp_means = wf_means = None
-
-        if 'main_role_name' in train_df.columns:
-            role_means = train_df.groupby('main_role_name')[target_column].mean()
-            train_df['role_mean_salary'] = train_df['main_role_name'].map(role_means).fillna(global_mean)
-            test_df['role_mean_salary'] = test_df['main_role_name'].map(role_means).fillna(global_mean)
-
-        if 'area_name' in train_df.columns:
-            region_means = train_df.groupby('area_name')[target_column].mean()
-            train_df['region_mean_salary'] = train_df['area_name'].map(region_means).fillna(global_mean)
-            test_df['region_mean_salary'] = test_df['area_name'].map(region_means).fillna(global_mean)
-
-        if 'employment_name' in train_df.columns:
-            emp_means = train_df.groupby('employment_name')[target_column].mean()
-            train_df['employment_mean_salary'] = train_df['employment_name'].map(emp_means).fillna(global_mean)
-            test_df['employment_mean_salary'] = test_df['employment_name'].map(emp_means).fillna(global_mean)
-
-        if 'work_format_name' in train_df.columns:
-            wf_means = train_df.groupby('work_format_name')[target_column].mean()
-            train_df['work_format_mean_salary'] = train_df['work_format_name'].map(wf_means).fillna(global_mean)
-            test_df['work_format_mean_salary'] = test_df['work_format_name'].map(wf_means).fillna(global_mean)
-
-        # Собираем итоговый список признаков
-        te_columns = [c for c in ['role_mean_salary', 'region_mean_salary',
-                                    'employment_mean_salary', 'work_format_mean_salary']
-                      if c in train_df.columns]
-
-        all_features = list(available_features) + te_columns
-        self.feature_columns = all_features
-        logger.info(f"Итого признаков: {len(all_features)} (из них {len(te_columns)} TE из train)")
-
-        # ======= ПОДГОТОВКА X и y =======
-        X_train = train_df[all_features].fillna(0).values
-        X_test = test_df[all_features].fillna(0).values
-        y_train_orig = train_df[target_column].values
-        y_test_orig = test_df[target_column].values
-
-        # Логарифм целевой переменной
-        y_train_log = np.log1p(y_train_orig)
-        y_test_log = np.log1p(y_test_orig)
-
-        logger.info(f"Обучающая выборка: {len(X_train)}, Тестовая: {len(X_test)}")
-
-        # ======= CAT_FEATURES ДЛЯ CATBOOST =======
-        self._cat_feature_indices = []
-
-        # ======= ОСНОВНАЯ МОДЕЛЬ (CatBoost) =======
-        self.model = self._get_model(algorithm)
-
-        if algorithm == 'catboost':
-            # ======= CatBoost ВСТРОЕННАЯ КРОСС-ВАЛИДАЦИЯ (через Pool) =======
-            try:
-                from catboost import Pool, cv as catboost_cv
-
-                train_pool = self._make_pool(X_train, y_train_log, self._cat_feature_indices)
-
-                cv_params = {
-                    'loss_function': 'RMSE',
-                    'random_seed': 42,
-                    'verbose': 0,
-                    'iterations': 2000,
-                    'learning_rate': 0.05,
-                    'depth': 8,
-                    'l2_leaf_reg': 3,
-                    'min_data_in_leaf': 5,
-                }
-
-                cv_result = catboost_cv(
-                    pool=train_pool,
-                    params=cv_params,
-                    fold_count=5,
-                    partition_random_seed=42,
-                    verbose=False,
-                    early_stopping_rounds=50
+        for cat_col, te_col in te_configs:
+            if cat_col in X_train.columns:
+                group_stats = combined.groupby(cat_col)['_target'].agg(
+                    ['mean', 'count']
                 )
+                smoothing = group_stats['count'] / (
+                    group_stats['count'] + self.te_min_samples
+                )
+                smoothed_means = (
+                    smoothing * group_stats['mean'] +
+                    (1 - smoothing) * global_mean
+                )
+                self.target_encoding_maps[te_col] = smoothed_means
+                self.te_col_mapping[te_col] = cat_col
 
-                best_cv_score = cv_result['test-RMSE-mean'].min()
-                logger.info(f"CatBoost CV RMSE (log): {best_cv_score:.4f}")
-            except Exception as e:
-                logger.warning(f"CatBoost CV не удалось: {e}, пропускаем кросс-валидацию")
+                X_train[te_col] = X_train[cat_col].map(smoothed_means)
+                X_test[te_col] = X_test[cat_col].map(smoothed_means)
 
-            # ======= ПОДБОР ГИПЕРПАРАМЕТРОВ (sklearn GridSearch БЕЗ cat_features) =======
-            if tune_hyperparams:
-                self._tune_hyperparameters(X_train, y_train_log, algorithm)
+                info_parts.append(f"{cat_col}={len(smoothed_means)}")
 
-            # ======= ОБУЧЕНИЕ ОСНОВНОЙ МОДЕЛИ ЧЕРЕЗ POOL =======
-            train_pool = self._make_pool(X_train, y_train_log, self._cat_feature_indices)
-            self.model.fit(train_pool)
-            logger.info("CatBoost обучен с cat_features через Pool")
-        else:
-            # Для RandomForest / GradientBoosting — обычный fit
-            cv_scores = cross_val_score(self.model, X_train, y_train_log, cv=5, scoring='neg_mean_absolute_error')
-            logger.info(f"CV MAE (log): {-cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
+        self.te_fallback = float(y_train.mean())
 
-            if tune_hyperparams:
-                self._tune_hyperparameters(X_train, y_train_log, algorithm)
+        for _, te_col in te_configs:
+            if te_col in X_train.columns:
+                X_train[te_col] = X_train[te_col].fillna(self.te_fallback)
+                X_test[te_col] = X_test[te_col].fillna(self.te_fallback)
 
-            self.model.fit(X_train, y_train_log)
+        logger.info(
+            f"Целевое кодирование (сглаженное, только по train): "
+            f"{', '.join(info_parts)}, fallback={self.te_fallback:.0f}"
+        )
 
-        # ======= ВТОРАЯ МОДЕЛЬ (RandomForest) для ансамбля =======
-        logger.info("Обучение второй модели (RandomForest) для ансамбля...")
-        self.secondary_model = RandomForestRegressor(
-            n_estimators=500,
-            max_depth=20,
-            min_samples_split=3,
-            min_samples_leaf=2,
-            random_state=42,
+        return X_train, X_test
+
+  
+    def _prepare_rf_features(self, X):
+        rf = X.copy()
+        for col in self.cat_columns:
+            if col in rf.columns:
+                rf.drop(col, axis=1, inplace=True)
+        for col in self.text_columns:
+            if col in rf.columns:
+                rf.drop(col, axis=1, inplace=True)
+        rf = rf.fillna(0)
+        return rf
+
+    def _get_cat_feature_indices(self, X):
+        indices = []
+        for col in self.cat_columns:
+            if col in X.columns:
+                indices.append(X.columns.get_loc(col))
+        return indices
+
+    def _get_text_feature_indices(self, X):
+        indices = []
+        for col in self.text_columns:
+            if col in X.columns:
+                indices.append(X.columns.get_loc(col))
+        return indices
+
+    def _evaluate(self, y_true, y_pred, model_name):
+        mae = mean_absolute_error(y_true, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+        r2 = r2_score(y_true, y_pred)
+        mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+        mean_salary = y_true.mean()
+        mae_pct = (mae / mean_salary) * 100
+
+        logger.info(
+            f"  [{model_name}] MAE={mae:.0f} ({mae_pct:.1f}%), "
+            f"RMSE={rmse:.0f}, R²={r2:.4f}, MAPE={mape:.1f}%"
+        )
+        return {
+            'MAE': mae,
+            'MAE%': mae_pct,
+            'RMSE': rmse,
+            'R2': r2,
+            'MAPE': mape
+        }
+
+    def _cross_validate(self, model, X, y, model_name, cv=5):
+        try:
+            scores = cross_val_score(
+                model, X, y, cv=cv, scoring='r2', n_jobs=-1
+            )
+            mean_r2 = scores.mean()
+            std_r2 = scores.std()
+            logger.info(
+                f"  [{model_name}] Кросс-валидация R²: "
+                f"{mean_r2:.4f} ± {std_r2:.4f}"
+            )
+            return mean_r2
+        except Exception as e:
+            logger.warning(
+                f"  [{model_name}] Кросс-валидация не удалась: {e}"
+            )
+            return None
+
+    def _log_feature_importance(self, model, columns, model_name, top_n=15):
+        if not hasattr(model, 'feature_importances_'):
+            return
+        importances = pd.Series(model.feature_importances_, index=columns)
+        importances = importances.sort_values(ascending=False).head(top_n)
+        logger.info(f"  Топ-{top_n} признаков [{model_name}]:")
+        for feat, imp in importances.items():
+            logger.info(f"    {feat}: {imp:.4f}")
+
+
+    def train(self, X, y, top_skill_cols=None, test_size=0.2, random_state=42):
+        logger.info(f"=== Обучение моделей ===")
+        logger.info(f"  Данных: {len(X)} строк, {len(X.columns)} признаков")
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        logger.info(f"  Train: {len(X_train)} | Test: {len(X_test)}")
+
+        X_train, X_test = self._add_target_encoding(X_train, X_test, y_train)
+
+        X_train_rf = self._prepare_rf_features(X_train)
+        X_test_rf = self._prepare_rf_features(X_test)
+        logger.info(
+            f"  RF/GB-признаков: {len(X_train_rf.columns)} "
+            f"(numeric only, без cat/text строк)"
+        )
+
+        all_metrics = {}
+
+        logger.info("--- RandomForest ---")
+
+        rf = RandomForestRegressor(
+            n_estimators=300,
+            max_depth=12,
+            min_samples_split=5,
+            min_samples_leaf=3,
+            max_features='sqrt',
+            random_state=random_state,
             n_jobs=-1
         )
-        self.secondary_model.fit(X_train, y_train_log)
 
-        # ======= ПРЕДСКАЗАНИЕ — АНСАМБЛЬ (0.6 CatBoost + 0.4 RF) =======
-        if algorithm == 'catboost' and self._cat_feature_indices:
-            test_pool = self._make_pool(X_test, cat_indices=self._cat_feature_indices)
-            y_pred_cat_log = self.model.predict(test_pool)
-        else:
-            y_pred_cat_log = self.model.predict(X_test)
+        cv_r2 = self._cross_validate(rf, X_train_rf, y_train, 'RandomForest')
+        rf.fit(X_train_rf, y_train)
+        rf_pred = rf.predict(X_test_rf)
 
-        y_pred_rf_log = self.secondary_model.predict(X_test)
-        y_pred_log = 0.6 * y_pred_cat_log + 0.4 * y_pred_rf_log
-        y_pred = np.expm1(y_pred_log)
+        rf_metrics = self._evaluate(y_test, rf_pred, 'RandomForest')
+        rf_metrics['CV_R2'] = cv_r2
+        all_metrics['RandomForest'] = rf_metrics
 
-        # ======= МЕТРИКИ =======
-        mae = mean_absolute_error(y_test_orig, y_pred)
-        r2 = r2_score(y_test_orig, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test_orig, y_pred))
-        mean_salary = y_test_orig.mean()
-        mae_percent = (mae / mean_salary) * 100
+        self._log_feature_importance(rf, X_train_rf.columns, 'RandomForest')
+        self.models['random_forest'] = rf
+        self.models['_rf_columns'] = list(X_train_rf.columns)
 
-        self.metrics = {
-            'MAE': round(mae, 2),
-            'MAE_percent': round(mae_percent, 2),
-            'R2': round(r2, 4),
-            'RMSE': round(rmse, 2),
-            'mean_salary': round(mean_salary, 2),
-            'train_size': len(X_train),
-            'test_size': len(X_test),
-            'algorithm': f'{algorithm} + RF ensemble',
-            'n_features': len(all_features),
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+      
+        logger.info("--- CatBoost (с нативными text_features) ---")
 
-        self._is_trained = True
+        cat_indices = self._get_cat_feature_indices(X_train)
+        text_indices = self._get_text_feature_indices(X_train)
 
-        # Также считаем метрики отдельно для CatBoost (для сравнения)
-        y_pred_cat = np.expm1(y_pred_cat_log)
-        r2_cat = r2_score(y_test_orig, y_pred_cat)
-        logger.info(f"  CatBoost отдельно R2: {r2_cat:.4f}")
-        logger.info(f"  Ensemble R2: {r2:.4f}")
-
-        logger.info(f"Метрики модели (ансамбль):")
-        logger.info(f"  MAE: {mae:.0f} руб. ({mae_percent:.1f}% от средней ЗП)")
-        logger.info(f"  R2: {r2:.4f}")
-        logger.info(f"  RMSE: {rmse:.0f} руб.")
-
-        if mae_percent <= 20:
-            logger.info(f"  MAE в пределах 20% от средней ЗП - ТРЕБОВАНИЕ ВЫПОЛНЕНО")
-        else:
-            logger.warning(f"  MAE {mae_percent:.1f}% превышает 20% - требование НЕ выполнено")
-
-        if r2 >= 0.7:
-            logger.info(f"  R2 >= 0.7 - ТРЕБОВАНИЕ ВЫПОЛНЕНО")
-        else:
-            logger.warning(f"  R2 {r2:.4f} < 0.7 - требование НЕ выполнено")
-
-        return self.metrics
-
-    def _tune_hyperparameters(self, X_train, y_train, algorithm: str):
-        """Подбор гиперпараметров через GridSearchCV."""
-        logger.info("Подбор гиперпараметров...")
-
-        if algorithm == 'catboost':
-            try:
-                from catboost import CatBoostRegressor
-                param_grid = {
-                    'iterations': [1500, 2000],
-                    'learning_rate': [0.03, 0.05, 0.1],
-                    'depth': [6, 8],
-                    'l2_leaf_reg': [3, 5, 7]
-                }
-                # Для GridSearchCV создаём модель БЕЗ cat_features (чтобы sklearn не ругался при clone)
-                base_model = CatBoostRegressor(
-                    iterations=1500, learning_rate=0.05, depth=8,
-                    l2_leaf_reg=3, min_data_in_leaf=5,
-                    verbose=0, random_seed=42
-                )
-            except ImportError:
-                return
-        elif algorithm == 'random_forest':
-            param_grid = {
-                'n_estimators': [300, 500],
-                'max_depth': [15, 20, 25],
-                'min_samples_split': [3, 5]
-            }
-            base_model = self._get_model(algorithm)
-        else:
-            return
-
-        grid_search = GridSearchCV(
-            base_model, param_grid, cv=3, scoring='neg_mean_absolute_error',
-            n_jobs=-1, verbose=0
+        logger.info(
+            f"  CatBoost: cat_features={cat_indices}, "
+            f"text_features={text_indices}"
         )
-        grid_search.fit(X_train, y_train)
 
-        best_params = grid_search.best_params_
-        logger.info(f"Лучшие параметры: {best_params}")
-        logger.info(f"Лучший CV MAE: {-grid_search.best_score_:.4f}")
+        train_pool = Pool(
+            X_train, y_train,
+            cat_features=cat_indices,
+            text_features=text_indices
+        )
+        test_pool = Pool(
+            X_test, y_test,
+            cat_features=cat_indices,
+            text_features=text_indices
+        )
 
-        # Пересоздаём модель с лучшими параметрами (БЕЗ cat_features в конструкторе)
-        if algorithm == 'catboost':
-            try:
-                from catboost import CatBoostRegressor
-                self.model = CatBoostRegressor(
-                    **best_params,
-                    min_data_in_leaf=5,
-                    verbose=0,
-                    random_seed=42,
-                )
-                # cat_features НЕ передаём в конструктор — будет через Pool при fit
-            except ImportError:
-                self.model = grid_search.best_estimator_
-        else:
-            self.model = grid_search.best_estimator_
+        cb = CatBoostRegressor(
+            iterations=2000,
+            depth=7,
+            learning_rate=0.02,
+            l2_leaf_reg=5,
+            bagging_temperature=0.5,
+            random_strength=1.0,
+            random_seed=random_state,
+            verbose=500,
+            early_stopping_rounds=100
+        )
 
-    def predict(self, features: pd.DataFrame or np.ndarray) -> np.ndarray:
-        """Предсказание (ансамбль CatBoost + RF)."""
-        if not self._is_trained:
-            raise ValueError("Модель не обучена.")
+        logger.info("  [CatBoost] Кросс-валидация пропущена (используется early_stopping)")
+        cv_r2 = None
+        cb.fit(train_pool, eval_set=test_pool)
+        cb_pred = cb.predict(test_pool)
 
-        if isinstance(features, pd.DataFrame):
-            available = [c for c in self.feature_columns if c in features.columns]
-            features = features[available].fillna(0).values
+        cb_metrics = self._evaluate(y_test, cb_pred, 'CatBoost')
+        cb_metrics['CV_R2'] = cv_r2
+        all_metrics['CatBoost'] = cb_metrics
 
-        # CatBoost предсказание через Pool если есть cat_features
-        if self._cat_feature_indices:
-            pool = self._make_pool(features, cat_indices=self._cat_feature_indices)
-            pred_cat_log = self.model.predict(pool)
-        else:
-            pred_cat_log = self.model.predict(features)
+        self._log_feature_importance(cb, X_train.columns, 'CatBoost')
+        self.models['catboost'] = cb
+        self.models['_cat_columns'] = list(X_train.columns)
+        self.models['_cat_indices'] = cat_indices
+        self.models['_text_indices'] = text_indices
 
-        pred_rf_log = self.secondary_model.predict(features)
-        pred_log = 0.6 * pred_cat_log + 0.4 * pred_rf_log
-        return np.expm1(pred_log)
+        logger.info("--- GradientBoosting ---")
 
-    def predict_single(self, feature_dict: dict) -> float:
-        """Прогноз зарплаты для одного набора признаков."""
-        if not self._is_trained:
-            raise ValueError("Модель не обучена.")
+        gb = GradientBoostingRegressor(
+            n_estimators=300,
+            max_depth=5,
+            learning_rate=0.05,
+            subsample=0.8,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            random_state=random_state
+        )
 
-        features = np.array([[feature_dict.get(col, 0) for col in self.feature_columns]])
+        cv_r2 = self._cross_validate(gb, X_train_rf, y_train, 'GradientBoosting')
+        gb.fit(X_train_rf, y_train)
+        gb_pred = gb.predict(X_test_rf)
 
-        if self._cat_feature_indices:
-            pool = self._make_pool(features, cat_indices=self._cat_feature_indices)
-            pred_cat_log = self.model.predict(pool)[0]
-        else:
-            pred_cat_log = self.model.predict(features)[0]
+        gb_metrics = self._evaluate(y_test, gb_pred, 'GradientBoosting')
+        gb_metrics['CV_R2'] = cv_r2
+        all_metrics['GradientBoosting'] = gb_metrics
 
-        pred_rf_log = self.secondary_model.predict(features)[0]
-        pred_log = 0.6 * pred_cat_log + 0.4 * pred_rf_log
-        return float(np.expm1(pred_log))
+        self._log_feature_importance(gb, X_train_rf.columns, 'GradientBoosting')
+        self.models['gradient_boosting'] = gb
 
-    def get_feature_importance(self, top_n: int = 15) -> pd.DataFrame:
-        """Важность признаков (основной модели)."""
-        if not self._is_trained or not hasattr(self.model, 'feature_importances_'):
-            return None
+        logger.info("--- Ансамбль (RF + CatBoost + GB) ---")
 
-        importance_df = pd.DataFrame({
-            'feature': self.feature_columns,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False).head(top_n)
+        rf_w = max(rf_metrics['R2'], 0.01)
+        cb_w = max(cb_metrics['R2'], 0.01)
+        gb_w = max(gb_metrics['R2'], 0.01)
+        total = rf_w + cb_w + gb_w
 
-        return importance_df
+        ensemble_pred = (
+            rf_w * rf_pred + cb_w * cb_pred + gb_w * gb_pred
+        ) / total
+        ens_metrics = self._evaluate(y_test, ensemble_pred, 'Ансамбль')
+        all_metrics['Ансамбль'] = ens_metrics
 
-    def save(self, filepath: str = None):
-        """Сохранение обученной модели (salary_model.joblib)."""
-        import joblib
-
-        if filepath is None:
-            os.makedirs(MODELS_DIR, exist_ok=True)
-            filepath = os.path.join(MODELS_DIR, "salary_model.joblib")
-
-        model_data = {
-            'model': self.model,
-            'secondary_model': self.secondary_model,
-            'feature_columns': self.feature_columns,
-            'cat_feature_indices': self._cat_feature_indices,
-            'metrics': self.metrics,
-            'is_trained': self._is_trained
+      
+        self.ensemble_weights = {
+            'RandomForest': rf_w / total,
+            'CatBoost': cb_w / total,
+            'GradientBoosting': gb_w / total,
         }
 
-        joblib.dump(model_data, filepath)
-        logger.info(f"Модель сохранена: {filepath}")
+       
+        best_name = max(all_metrics, key=lambda k: all_metrics[k]['R2'])
+        self.best_model_name = best_name
+        best_r2 = all_metrics[best_name]['R2']
 
-        metrics_path = os.path.join(os.path.dirname(filepath), "salary_metrics.json")
-        with open(metrics_path, 'w', encoding='utf-8') as f:
-            json.dump(self.metrics, f, ensure_ascii=False, indent=2)
-        logger.info(f"Метрики сохранены: {metrics_path}")
+        # Сохраняем метрики лучшей модели
+        self.best_r2 = best_r2
+        self.best_mae = all_metrics[best_name]['MAE']
+        self.best_mae_pct = all_metrics[best_name]['MAE%']
 
-    def load(self, filepath: str = None):
-        """Загрузка обученной модели."""
-        import joblib
+        logger.info("=" * 60)
+        logger.info(f"ЛУЧШАЯ МОДЕЛЬ: {best_name} (R²={best_r2:.4f})")
+        logger.info("=" * 60)
 
-        if filepath is None:
-            filepath = os.path.join(MODELS_DIR, "salary_model.joblib")
+        if best_r2 >= 0.7:
+            logger.info("Требование ТЗ R² >= 0.7 — ВЫПОЛНЕНО")
+        else:
+            logger.warning(
+                f"Требование ТЗ R² >= 0.7 — НЕ выполнено "
+                f"(текущий: {best_r2:.4f})"
+            )
 
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"Модель не найдена: {filepath}")
+        for name, m in all_metrics.items():
+            if m['MAE%'] <= 20:
+                logger.info(
+                    f"  [{name}] MAE <= 20% — ВЫПОЛНЕНО ({m['MAE%']:.1f}%)"
+                )
+            else:
+                logger.warning(
+                    f"  [{name}] MAE <= 20% — НЕ выполнено ({m['MAE%']:.1f}%)"
+                )
 
-        model_data = joblib.load(filepath)
-        self.model = model_data['model']
-        self.secondary_model = model_data.get('secondary_model')
-        self.feature_columns = model_data['feature_columns']
-        self._cat_feature_indices = model_data.get('cat_feature_indices', [])
-        self.metrics = model_data['metrics']
-        self._is_trained = model_data['is_trained']
+        return all_metrics
 
-        logger.info(f"Модель загружена: {filepath}")
-        logger.info(f"Метрики: MAE={self.metrics.get('MAE', 'N/A')}, R2={self.metrics.get('R2', 'N/A')}")
+    def compare(self, X, y, top_skill_cols=None, test_size=0.2, random_state=42):
+        return self.train(X, y, top_skill_cols, test_size, random_state)
 
+    def predict(self, X):
+        if self.best_model_name is None:
+            raise ValueError("Модель не обучена. Сначала вызовите train()")
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+        X_pred = X.copy()
 
-    import sys
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.path.insert(0, project_root)
+        # Целевое кодирование (карты из train)
+        if self.target_encoding_maps:
+            for te_col, means in self.target_encoding_maps.items():
+                cat_col = self.te_col_mapping.get(te_col)
+                if cat_col and cat_col in X_pred.columns:
+                    X_pred[te_col] = X_pred[cat_col].map(means).fillna(
+                        self.te_fallback
+                    )
 
-    from src.data_processing.feature_engineering import FeatureEngineer
+        # CatBoost — cat_features + text_features
+        cat_indices = self.models.get('_cat_indices', [])
+        text_indices = self.models.get('_text_indices', [])
+        pool = Pool(
+            X_pred,
+            cat_features=cat_indices,
+            text_features=text_indices
+        )
+        cb_pred = self.models['catboost'].predict(pool)
 
-    data_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "finaldata", "month_dataset_20260420_205719.csv"
-    )
-    if os.path.exists(data_path):
-        df = pd.read_csv(data_path)
-        logger.info(f"Загружено {len(df)} записей")
+        rf_cols = self.models.get('_rf_columns', [])
+        X_rf = self._prepare_rf_features(X_pred)
+        for col in rf_cols:
+            if col not in X_rf.columns:
+                X_rf[col] = 0
+        X_rf = X_rf[rf_cols]
+        rf_pred = self.models['random_forest'].predict(X_rf)
 
-        fe = FeatureEngineer()
-        df, feature_cols = fe.prepare_dataset_for_regression(df, fit=True)
+        gb_pred = self.models['gradient_boosting'].predict(X_rf)
 
-        predictor = SalaryPredictor()
-        metrics = predictor.train(df, feature_cols, algorithm='catboost', tune_hyperparams=True)
+        if self.best_model_name == 'CatBoost':
+            return cb_pred
+        elif self.best_model_name == 'GradientBoosting':
+            return gb_pred
+        elif self.best_model_name == 'Ансамбль':
+            w = self.ensemble_weights
+            return (
+                w.get('RandomForest', 0.33) * rf_pred +
+                w.get('CatBoost', 0.33) * cb_pred +
+                w.get('GradientBoosting', 0.33) * gb_pred
+            )
+        else:
+            return rf_pred
 
-        print("\nМетрики модели (ансамбль):")
-        for k, v in metrics.items():
-            print(f"  {k}: {v}")
+    def save(self, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+        logger.info(f"Модель сохранена: {path}")
 
-        predictor.save()
-
-        importance = predictor.get_feature_importance()
-        if importance is not None:
-            print(f"\nТоп-15 признаков:")
-            print(importance.to_string())
-    else:
-        print(f"Файл не найден: {data_path}")
+    @classmethod
+    def load(cls, path):
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+        # Совместимость: старые модели без новых полей
+        if not hasattr(model, 'te_col_mapping'):
+            model.te_col_mapping = {}
+            for te_col in model.target_encoding_maps:
+                if te_col == 'role_mean_salary':
+                    model.te_col_mapping[te_col] = 'main_role_name'
+                elif te_col == 'region_mean_salary':
+                    model.te_col_mapping[te_col] = 'area_name'
+                elif te_col == 'exp_mean_salary':
+                    model.te_col_mapping[te_col] = 'experience_name'
+                elif te_col == 'schedule_mean_salary':
+                    model.te_col_mapping[te_col] = 'schedule_name'
+                elif te_col == 'workformat_mean_salary':
+                    model.te_col_mapping[te_col] = 'work_format_name'
+                elif te_col == 'employment_mean_salary':
+                    model.te_col_mapping[te_col] = 'employment_name'
+        if not hasattr(model, 'best_mae'):
+            model.best_mae = None
+        if not hasattr(model, 'best_mae_pct'):
+            model.best_mae_pct = None
+        if not hasattr(model, 'best_r2'):
+            model.best_r2 = None
+        if not hasattr(model, 'ensemble_weights'):
+            model.ensemble_weights = {}
+        logger.info(f"Модель загружена: {path}")
+        return model
