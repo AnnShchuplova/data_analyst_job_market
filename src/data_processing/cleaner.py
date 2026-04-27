@@ -296,11 +296,23 @@ class DataCleaner:
     def extract_skills(self, df: pd.DataFrame) -> pd.DataFrame:
         
         df = df.copy()
-
-        df['skills_list'] = [[] for _ in range(len(df))]
-        df = self.extract_skills_from_text(df)
-        df['skills_count'] = df['skills_list'].apply(len)
-
+        
+        if 'key_skills' in df.columns:
+            df['skills_list'] = df['key_skills'].apply(
+                lambda x: [skill.get('name') for skill in x] 
+                if isinstance(x, list) 
+                else []
+            )
+            
+            df['skills_count'] = df['skills_list'].apply(len)
+           
+            if df['skills_list'].notna().sum() > 10:
+                top_skills = self._get_top_skills(df, top_n=15)
+                for skill in top_skills:
+                    col_name = f'skill_{skill.replace(" ", "_").replace("/", "_").lower()}'
+                    df[col_name] = df['skills_list'].apply(
+                        lambda x: 1 if skill in x else 0
+                    )
         return df
     
     def _get_top_skills(self, df, top_n=15):
@@ -667,15 +679,3 @@ class DataCleaner:
                     percentage = count / len(df) * 100
                     print(f"  {skill}: {count} ({percentage:.1f}%)")
         
-
-
-if __name__ == "__main__":
-    cleaner = DataCleaner()
-    
-    input_file = "data/processed/analyst_vacancies_20260123_153601.json"
-    
-    if not os.path.exists(input_file):
-        print(f"Файл не найден: {input_file}")
-    else:
-        df_cleaned = cleaner.run_full_clean(input_file, remove_outliers=False)
-        print("\nОчистка завершена")
