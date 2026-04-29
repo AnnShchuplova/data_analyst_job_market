@@ -18,11 +18,13 @@ RUN pip install --no-cache-dir -r requirements-web.txt
 # Copy only what the web service needs. Parser-specific code stays out.
 COPY app/ ./app/
 COPY src/ ./src/
-COPY run.py ./
+# Bake in the pre-trained models so the image is self-contained.
+# The models/ dir is also mounted as a named volume so retraining via the
+# web UI persists; Docker initialises an empty volume from the image layer.
+COPY models/ ./models/
 
-# Cache dir is mounted from a named volume at runtime; create mount points so
-# Streamlit doesn't fail on first boot if the volume hasn't been populated.
-RUN mkdir -p /app/data/processed /app/data/cache
+# Create mount points for runtime volumes.
+RUN mkdir -p /app/finaldata /app/data/cache /app/models
 
 EXPOSE 8501
 
