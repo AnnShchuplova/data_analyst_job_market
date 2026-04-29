@@ -2,7 +2,9 @@
 #   web    — public Streamlit dashboard (reads processed CSVs, read-only).
 #   parser — private hh.ru collector + cleaner, cron-driven, no ports.
 #
-# Data flows parser -> processed_data -> web. No other integration surface.
+# Data flows: parser writes to ./finaldata/ (bind mount) -> web reads same dir.
+# Using a bind mount means existing local CSVs are immediately available on
+# first boot without needing to run the parser first.
 
 services:
   web:
@@ -14,15 +16,16 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      # Parser writes here; web only needs to read it.
-      - processed_data:/app/data/processed:ro
+      # Bind mount: existing local CSVs are visible immediately on first boot.
+      # VacanciesRepository and clusters.py both look in finaldata/ at runtime.
+      - ./finaldata:/app/finaldata:ro
       # Clustering cache is web-owned; parser must never touch it.
       - cache_data:/app/data/cache
+      # Models volume: baked into image on first run, persists retraining.
+      - models_data:/app/models
     env_file: .env
     restart: unless-stopped
     depends_on:
-      # Not a hard dep — web can boot with an empty volume and show
-      # "no data" gracefully. depends_on is purely for startup ordering.
       - parser
 
   parser:
@@ -34,12 +37,13 @@ services:
     volumes:
       # Raw JSONs stay private to parser — web has no business reading them.
       - raw_data:/app/data/raw
-      - processed_data:/app/data/processed
+      # Same bind mount: parser writes new CSVs here, web picks them up automatically.
+      - ./finaldata:/app/finaldata
     env_file: .env
     restart: unless-stopped
     # Deliberately no `ports:` — this service must not be reachable externally.
 
 volumes:
-  processed_data:
   raw_data:
   cache_data:
+  models_data:

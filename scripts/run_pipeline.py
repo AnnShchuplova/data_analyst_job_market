@@ -43,7 +43,7 @@ def main() -> int:
 
         log.info("Step 3/3: cleaning and feature extraction")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_csv = PROJECT_ROOT / "data" / "processed" / f"new_cleaned_vacancies_{timestamp}.csv"
+        output_csv = PROJECT_ROOT / "finaldata" / f"new_cleaned_vacancies_{timestamp}.csv"
         output_csv.parent.mkdir(parents=True, exist_ok=True)
 
         cleaner = DataCleaner()
