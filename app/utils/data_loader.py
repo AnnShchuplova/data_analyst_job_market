@@ -11,13 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def load_processed_data(project_root: str = None) -> tuple:
-    """Загрузка последнего CSV файла из finaldata/.
-    
-    Returns:
-    --------
-    (df, filename) : DataFrame и имя файла, или (None, None) если файлы не найдены
-    """
+def load_processed_data(project_root: str = '..\..\\') -> tuple:
     if project_root is None:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
