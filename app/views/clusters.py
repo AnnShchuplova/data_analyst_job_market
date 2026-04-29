@@ -1,16 +1,42 @@
-import streamlit as st
+import os
+
+import pandas as pd
 import plotly.express as px
-from src.utils.data_loader import load_vacancies_data, compute_data_checksum
-from src.services.clustering_service import ClusteringService
+import streamlit as st
+
 from src.infrastructure.cache import ClusteringCache
+from src.infrastructure.vacancies_repository import VacanciesRepository
+from src.services.clustering_service import ClusteringService
+
+
+@st.cache_data(ttl=300)
+def _load_data():
+    """Загрузка последнего датасета из finaldata/."""
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    processed_dir = os.path.join(project_root, "finaldata")
+    if not os.path.exists(processed_dir):
+        return None, None
+    files = [f for f in os.listdir(processed_dir) if f.endswith(".csv")]
+    if not files:
+        return None, None
+    latest_file = max(
+        files, key=lambda x: os.path.getmtime(os.path.join(processed_dir, x))
+    )
+    file_path = os.path.join(processed_dir, latest_file)
+    df = pd.read_csv(file_path, encoding="utf-8")
+    return df, latest_file
 
 
 @st.cache_resource
 def get_service(data_checksum: str):
     # Keyed by checksum so that when parser writes a new CSV, the next checksum
     # refresh invalidates the cached service and a fresh DataFrame is loaded.
-    df = load_vacancies_data()
-    return ClusteringService(df) if not df.empty else None
+    df, _ = _load_data()
+    if df is None or df.empty:
+        return None
+    return ClusteringService(df)
 
 
 @st.cache_resource
@@ -23,7 +49,7 @@ def get_checksum() -> str:
     # TTL 5 min: web auto-detects a new CSV dropped by the parser container
     # without needing a restart. Short enough to feel fresh, long enough to
     # avoid re-hashing the file on every rerun.
-    return compute_data_checksum()
+    return VacanciesRepository().compute_checksum()
 
 
 def view_clusters(mock_service=None):
@@ -50,9 +76,10 @@ def view_clusters(mock_service=None):
         """
     )
 
-    if service is None or service.df.empty:
-        st.error("❌ Не удалось загрузить данные. Проверьте папку data/processed.")
+    if service is None:
+        st.warning("Данные не найдены. Поместите CSV в папку `finaldata/`.")
         return
+    
     with st.container(border=True):
         st.subheader("⚙️ Параметры")
         c1, c2 = st.columns([1, 1])
